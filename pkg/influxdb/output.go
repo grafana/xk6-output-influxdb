@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	influxdbclient "github.com/influxdata/influxdb-client-go/v2"
@@ -46,6 +47,8 @@ type Output struct {
 	logger          logrus.FieldLogger
 	fieldKinds      map[string]FieldKind
 	pointWriter     api.WriteAPIBlocking
+	semaphoreCh     chan struct{}
+	wg              sync.WaitGroup
 }
 
 // New returns new InfluxDB Output
@@ -81,6 +84,8 @@ func New(params output.Params) (*Output, error) {
 		config:      conf,
 		fieldKinds:  fldKinds,
 		pointWriter: cl.WriteAPIBlocking(conf.Organization.String, conf.Bucket.String),
+		semaphoreCh: make(chan struct{}, conf.ConcurrentWrites.Int64),
+		wg:          sync.WaitGroup{},
 	}, nil
 }
 
@@ -106,6 +111,7 @@ func (o *Output) Stop() error {
 	o.logger.Debug("Stopping...")
 	o.periodicFlusher.Stop()
 	o.client.Close()
+	o.wg.Wait()
 	o.logger.Debug("Stopped")
 	return nil
 }
@@ -176,28 +182,36 @@ func (o *Output) batchFromSamples(containers []stats.SampleContainer) []*write.P
 func (o *Output) flushMetrics() {
 	samples := o.GetBufferedSamples()
 	if len(samples) == 0 {
-		o.logger.Debug("Any buffered samples, skipping the flush operation")
 		return
 	}
 
-	start := time.Now()
-	batch := o.batchFromSamples(samples)
+	o.wg.Add(1)
+	o.semaphoreCh <- struct{}{}
+	go func() {
+		defer func() {
+			<-o.semaphoreCh
+			o.wg.Done()
+		}()
 
-	o.logger.WithField("samples", len(samples)).WithField("points", len(batch)).Debug("Sending metrics points...")
-	if err := o.pointWriter.WritePoint(context.Background(), batch...); err != nil {
-		o.logger.WithError(err).
-			WithField("elapsed", time.Since(start)).
-			WithField("points", len(batch)).
-			Error("Couldn't send metrics points")
-		return
-	}
+		start := time.Now()
+		batch := o.batchFromSamples(samples)
 
-	d := time.Since(start)
-	o.logger.WithField("elapsed", d).Debug("Metrics points have been sent")
-	if d > time.Duration(o.config.PushInterval.Duration) {
-		o.logger.WithField("t", d).
-			Warn("Flush operation took higher than the expected set flush period. If you see this message multiple times then probably you should adjust the setup or configuration to achieve a sustainable rate.")
-	}
+		o.logger.WithField("samples", len(samples)).WithField("points", len(batch)).Debug("Sending metrics points...")
+		if err := o.pointWriter.WritePoint(context.Background(), batch...); err != nil {
+			o.logger.WithError(err).
+				WithField("elapsed", time.Since(start)).
+				WithField("points", len(batch)).
+				Error("Couldn't send metrics points")
+			return
+		}
+
+		d := time.Since(start)
+		o.logger.WithField("elapsed", d).Debug("Metrics points have been sent")
+		if d > time.Duration(o.config.PushInterval.Duration) {
+			msg := "The flush operation took higher than the expected set push interval. If you see this message multiple times then the setup or configuration need to be adjusted to achieve a sustainable rate."
+			o.logger.WithField("t", d).Warn(msg)
+		}
+	}()
 }
 
 // MakeFieldKinds reads the Config and returns a lookup map of tag names to
