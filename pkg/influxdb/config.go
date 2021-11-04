@@ -27,7 +27,7 @@ type Config struct {
 func NewConfig() Config {
 	c := Config{
 		Addr:             null.NewString("http://localhost:8086", false),
-		TagsAsFields:     []string{"vu", "iter", "url"},
+		TagsAsFields:     []string{"vu:int", "iter:int", "url"},
 		ConcurrentWrites: null.NewInt(4, false),
 		PushInterval:     types.NewNullDuration(time.Second, false),
 	}
