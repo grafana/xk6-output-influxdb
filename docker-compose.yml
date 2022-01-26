@@ -3,6 +3,7 @@ version: '3.8'
 networks:
   k6:
   grafana:
+  influxdb:
 
 services:
   influxdb:
@@ -10,6 +11,7 @@ services:
     networks:
       - k6
       - grafana
+      - influxdb
     ports:
       - "8086:8086"
     environment:
@@ -21,9 +23,10 @@ services:
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=EEKpryGZk8pVDXmIuy484BKUxM5jOEDv7YNoeNZUbsNbpbPbP6kK_qY9Zsyw7zNnlZ7pHG16FYzNaqwLMBUz8g==
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:8.1.3
     networks:
       - grafana
+      - influxdb
     ports:
       - "3000:3000"
     environment:
@@ -34,12 +37,13 @@ services:
       - ./grafana:/etc/grafana/provisioning/
 
   k6:
-    image: .
+    build: .
     networks:
       - k6
     ports:
       - "6565:6565"
     environment:
+      - K6_OUT=xk6-influxdb=http://influxdb:8086
       - K6_INFLUXDB_ORGANIZATION=k6io
       - K6_INFLUXDB_BUCKET=demo
       - K6_INFLUXDB_INSECURE=true
@@ -47,4 +51,4 @@ services:
         # Instead, use a Token with restricted privileges.
       - K6_INFLUXDB_TOKEN=EEKpryGZk8pVDXmIuy484BKUxM5jOEDv7YNoeNZUbsNbpbPbP6kK_qY9Zsyw7zNnlZ7pHG16FYzNaqwLMBUz8g==
     volumes:
-      - ./samples:/scripts
+      - ./scripts:/scripts
