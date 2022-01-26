@@ -75,7 +75,7 @@ Clone the repo to get get started and follow these steps:
 3. Use the k6 Docker image to run the k6 script and send metrics to the InfluxDB started on the previous step. 
  
 	```shell
-	docker-compose run k6 -<scripts/http_2.js 
+	docker-compose run k6 run -<scripts/http_2.js 
 	```
 
 4. Visit http://localhost:3000 to view results in Grafana. This repository includes a basic dashboard.
