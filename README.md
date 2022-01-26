@@ -59,10 +59,17 @@ Clone the repo to get get started and follow these steps:
 
 1. Put your k6 scripts in the `scripts` directory or use the `http_2.js` example.
 
-2. Start the docker compose environments.
+2. Start the docker compose environment.
    
 	```shell
 	docker-compose up -d
+	```
+
+	```shell
+	# Output
+	Creating xk6-output-influxdb_influxdb_1 ... done
+	Creating xk6-output-influxdb_k6_1       ... done
+	Creating xk6-output-influxdb_grafana_1  ... done
 	```
 
 3. Use the k6 Docker image to run the k6 script and send metrics to the InfluxDB started on the previous step. 
