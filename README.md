@@ -78,7 +78,8 @@ Clone the repo to get get started and follow these steps:
 	docker-compose run k6 run -<scripts/http_2.js 
 	```
 
-4. Visit http://localhost:3000 to view results in Grafana. This repository includes a basic dashboard.
+4. Visit http://localhost:3000 to view results in Grafana. 
+	> This repository includes a [basic dashboard](./grafana/dashboards/dashboard.yml). If you want to build a custom Dashboard, contact the k6 team in Slack.
 
 
 ### Compatibility API
