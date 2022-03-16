@@ -51,7 +51,7 @@ Options for fine-grained control for flushing and connections.
 | K6_INFLUXDB_PRECISION         | 1ns | The timestamp [Precision](https://docs.influxdata.com/influxdb/v2.0/reference/glossary/#precision). |
 
 
-# Docker-compose
+# Docker Compose
 
 This repo includes a [docker-compose.yml](./docker-compose.yml) file that starts InfluxDB, Grafana and k6. This is just a quick to setup to show the usage, for real use case you might want to deploy outside of docker, use volumes and probably update versions.
 
@@ -72,13 +72,16 @@ Clone the repo to get get started and follow these steps:
 	Creating xk6-output-influxdb_grafana_1  ... done
 	```
 
-3. Use the k6 Docker image to run the k6 script and send metrics to the InfluxDB started on the previous step. 
- 
-	```shell
-	docker-compose run k6 run -<scripts/http_2.js 
-	```
+3. Use the k6 Docker image to run the k6 script and send metrics to the InfluxDB container started on the previous step. You must [set the `testid` tag](https://k6.io/docs/using-k6/tags-and-groups/#test-wide-tags) with a unique identifier to segment the metrics into discrete test runs for the Grafana dashboards.
+    ```shell
+    docker-compose run --rm k6 run -<scripts/http_2.js --tag testid=<SOME-ID>
+    ```
+   For convenience, the `docker-run.sh` can be used to simply:
+    ```shell
+    ./docker-run.sh scripts/http_2.js
+    ```
 
-4. Visit http://localhost:3000 to view results in Grafana. 
+4. Visit http://localhost:3000/ to view results in Grafana. 
 	> This repository includes a [basic dashboard](./grafana/dashboards/dashboard.yml). If you want to build a custom Dashboard, contact the k6 team in Slack.
 
 
