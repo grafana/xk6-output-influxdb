@@ -14,8 +14,8 @@ import (
 	"github.com/influxdata/influxdb-client-go/v2/api/write"
 	influxdblog "github.com/influxdata/influxdb-client-go/v2/log"
 	"github.com/sirupsen/logrus"
+	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
-	"go.k6.io/k6/stats"
 )
 
 func init() {
@@ -142,12 +142,12 @@ func (o *Output) extractTagsToValues(tags map[string]string, values map[string]i
 	return values
 }
 
-func (o *Output) batchFromSamples(containers []stats.SampleContainer) []*write.Point {
+func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write.Point {
 	type cacheItem struct {
 		tags   map[string]string
 		values map[string]interface{}
 	}
-	cache := map[*stats.SampleTags]cacheItem{}
+	cache := map[*metrics.SampleTags]cacheItem{}
 
 	var points []*write.Point
 	for _, container := range containers {
