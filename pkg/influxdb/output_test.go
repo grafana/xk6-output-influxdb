@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
-	"go.k6.io/k6/stats"
 )
 
 func TestNew(t *testing.T) {
@@ -119,12 +119,14 @@ func TestOutputFlushMetrics(t *testing.T) {
 		}
 		rw.WriteHeader(204)
 	}, func(tb testing.TB, c *Output) {
-		samples := make(stats.Samples, 10)
+		samples := make(metrics.Samples, 10)
 		for i := 0; i < len(samples); i++ {
-			samples[i] = stats.Sample{
-				Metric: stats.New("testGauge", stats.Gauge),
+			metric, err := metrics.NewRegistry().NewMetric("test_gauge", metrics.Gauge)
+			require.NoError(tb, err)
+			samples[i] = metrics.Sample{
+				Metric: metric,
 				Time:   time.Now(),
-				Tags: stats.NewSampleTags(map[string]string{
+				Tags: metrics.NewSampleTags(map[string]string{
 					"something": "else",
 					"VU":        "21",
 					"else":      "something",
@@ -132,8 +134,8 @@ func TestOutputFlushMetrics(t *testing.T) {
 				Value: 2.0,
 			}
 		}
-		c.AddMetricSamples([]stats.SampleContainer{samples})
-		c.AddMetricSamples([]stats.SampleContainer{samples})
+		c.AddMetricSamples([]metrics.SampleContainer{samples})
+		c.AddMetricSamples([]metrics.SampleContainer{samples})
 	})
 }
 
