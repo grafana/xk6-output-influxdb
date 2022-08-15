@@ -51,4 +51,4 @@ services:
         # Instead, use a Token with restricted privileges.
       - K6_INFLUXDB_TOKEN=EEKpryGZk8pVDXmIuy484BKUxM5jOEDv7YNoeNZUbsNbpbPbP6kK_qY9Zsyw7zNnlZ7pHG16FYzNaqwLMBUz8g==
     volumes:
-      - ./scripts:/scripts
+      - ./samples:/scripts
