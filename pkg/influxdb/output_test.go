@@ -105,6 +105,8 @@ func TestOutputFlushMetrics(t *testing.T) {
 		require.Equal(t, 20, samplesRead)
 	}()
 
+	registry := metrics.NewRegistry()
+
 	testOutputCycle(t, func(rw http.ResponseWriter, r *http.Request) {
 		b := bytes.NewBuffer(nil)
 		_, _ = io.Copy(b, r.Body)
@@ -121,16 +123,18 @@ func TestOutputFlushMetrics(t *testing.T) {
 	}, func(tb testing.TB, c *Output) {
 		samples := make(metrics.Samples, 10)
 		for i := 0; i < len(samples); i++ {
-			metric, err := metrics.NewRegistry().NewMetric("test_gauge", metrics.Gauge)
+			metric, err := registry.NewMetric("test_gauge", metrics.Gauge)
 			require.NoError(tb, err)
 			samples[i] = metrics.Sample{
-				Metric: metric,
-				Time:   time.Now(),
-				Tags: metrics.NewSampleTags(map[string]string{
-					"something": "else",
-					"VU":        "21",
-					"else":      "something",
-				}),
+				TimeSeries: metrics.TimeSeries{
+					Metric: metric,
+					Tags: registry.RootTagSet().WithTagsFromMap(map[string]string{
+						"something": "else",
+						"VU":        "21",
+						"else":      "something",
+					}),
+				},
+				Time:  time.Now(),
 				Value: 2.0,
 			}
 		}
@@ -161,7 +165,6 @@ func TestMakeFieldKinds(t *testing.T) {
 			expFields:    map[string]FieldKind{"iter;bool": String},
 		},
 		{
-
 			name:         "Duplicated field",
 			tagsAsFields: []string{"vu", "iter", "url", "boolField:bool", "boolField:bool"},
 			expErr:       true,
