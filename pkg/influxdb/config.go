@@ -11,6 +11,7 @@ import (
 	"gopkg.in/guregu/null.v3"
 )
 
+// Config contains the configuration for the Output.
 type Config struct {
 	Addr                  null.String        `json:"addr" envconfig:"K6_INFLUXDB_ADDR"`
 	Organization          null.String        `json:"organization" envconfig:"K6_INFLUXDB_ORGANIZATION"`
@@ -34,6 +35,7 @@ func NewConfig() Config {
 	return c
 }
 
+// Apply overrides internal configuration with received values.
 func (c Config) Apply(cfg Config) Config {
 	if cfg.Addr.Valid {
 		c.Addr = cfg.Addr
@@ -91,7 +93,8 @@ func parseURL(text string) (Config, error) {
 // GetConsolidatedConfig combines {default config values + JSON config +
 // environment vars + URL config values}, and returns the final result.
 func GetConsolidatedConfig(
-	jsonRawConf json.RawMessage, env map[string]string, url string) (Config, error) {
+	jsonRawConf json.RawMessage, env map[string]string, url string,
+) (Config, error) {
 	result := NewConfig()
 	if jsonRawConf != nil {
 		jsonConf, err := parseJSON(jsonRawConf)
