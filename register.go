@@ -1,3 +1,4 @@
+// Package influxdb registers the xk6-influxdb extension
 package influxdb
 
 import (

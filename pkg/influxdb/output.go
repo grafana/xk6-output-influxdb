@@ -1,3 +1,4 @@
+// Package influxdb is a k6 output that sends metrics to an InfluxDB v2 database.
 package influxdb
 
 import (
@@ -27,9 +28,13 @@ func init() {
 type FieldKind int
 
 const (
+	// String denotes string datatype
 	String FieldKind = iota
+	// Int denotes integer datatype
 	Int
+	// Float denotes float datatype
 	Float
+	// Bool denotes a boolean datatype
 	Bool
 )
 
@@ -208,7 +213,9 @@ func (o *Output) flushMetrics() {
 		d := time.Since(start)
 		o.logger.WithField("elapsed", d).Debug("Metrics points have been sent")
 		if d > time.Duration(o.config.PushInterval.Duration) {
-			msg := "The flush operation took higher than the expected set push interval. If you see this message multiple times then the setup or configuration need to be adjusted to achieve a sustainable rate."
+			msg := "The flush operation took higher than the expected set push interval. " +
+				"If you see this message multiple times then the setup or configuration " +
+				"need to be adjusted to achieve a sustainable rate."
 			o.logger.WithField("t", d).Warn(msg)
 		}
 	}()
