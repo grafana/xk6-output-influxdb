@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kelseyhightower/envconfig"
+	"github.com/mstoykov/envconfig"
 	"go.k6.io/k6/lib/types"
 	"gopkg.in/guregu/null.v3"
 )
@@ -105,8 +105,10 @@ func GetConsolidatedConfig(
 	}
 
 	envConfig := Config{}
-	if err := envconfig.Process("", &envConfig); err != nil {
-		// TODO: get rid of envconfig and actually use the env parameter...
+	if err := envconfig.Process("", &envConfig, func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}); err != nil {
 		return result, err
 	}
 	result = result.Apply(envConfig)
