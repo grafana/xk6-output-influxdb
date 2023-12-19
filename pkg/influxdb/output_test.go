@@ -119,7 +119,7 @@ func TestOutputFlushMetrics(t *testing.T) {
 				break
 			}
 		}
-		rw.WriteHeader(204)
+		rw.WriteHeader(http.StatusNoContent)
 	}, func(tb testing.TB, c *Output) {
 		samples := make(metrics.Samples, 10)
 		for i := 0; i < len(samples); i++ {
