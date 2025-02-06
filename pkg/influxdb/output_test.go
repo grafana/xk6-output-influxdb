@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.k6.io/k6/lib/testutils"
 	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
 )
 
 func TestNew(t *testing.T) {
 	t.Parallel()
-	logger := testutils.NewLogger(t)
+	logger := logrus.New()
 
 	t.Run("BucketRequired", func(t *testing.T) {
 		t.Parallel()
@@ -61,7 +61,7 @@ func TestNew(t *testing.T) {
 func TestExtractTagsToValues(t *testing.T) {
 	t.Parallel()
 	o, err := New(output.Params{
-		Logger:     testutils.NewLogger(t),
+		Logger:     logrus.New(),
 		JSONConfig: []byte(`{"bucket":"mybucket","tagsAsFields":["stringField","stringField2:string","boolField:bool","floatField:float","intField:int"]}`),
 	})
 	require.NoError(t, err)
@@ -86,7 +86,7 @@ func testOutputCycle(t testing.TB, handler http.HandlerFunc, body func(testing.T
 	defer ts.Close()
 
 	c, err := New(output.Params{
-		Logger:         testutils.NewLogger(t),
+		Logger:         logrus.New(),
 		ConfigArgument: fmt.Sprintf("%s/testbucket", ts.URL),
 	})
 	require.NoError(t, err)
