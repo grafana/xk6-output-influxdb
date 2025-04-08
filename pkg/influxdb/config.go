@@ -22,6 +22,8 @@ type Config struct {
 	ConcurrentWrites      null.Int           `json:"concurrentWrites,omitempty" envconfig:"K6_INFLUXDB_CONCURRENT_WRITES"`
 	Precision             types.NullDuration `json:"precision,omitempty" envconfig:"K6_INFLUXDB_PRECISION"`
 	TagsAsFields          []string           `json:"tagsAsFields,omitempty" envconfig:"K6_INFLUXDB_TAGS_AS_FIELDS"`
+	EnableUniqueTag       null.Bool          `json:"enableUniqueTag,omitempty" envconfig:"K6_INFLUXDB_ENABLE_UNIQUE_TAG"`
+	UniqueTagName         null.String        `json:"uniqueTagName,omitempty" envconfig:"K6_INFLUXDB_UNIQUE_TAG_NAME"`
 }
 
 // NewConfig creates a new InfluxDB output config with some default values.
@@ -31,6 +33,8 @@ func NewConfig() Config {
 		TagsAsFields:     []string{"vu:int", "iter:int", "url"},
 		ConcurrentWrites: null.NewInt(4, false),
 		PushInterval:     types.NewNullDuration(time.Second, false),
+		EnableUniqueTag:  null.NewBool(false, false),
+		UniqueTagName:    null.NewString("uniqueId", false),
 	}
 	return c
 }
@@ -63,6 +67,12 @@ func (c Config) Apply(cfg Config) Config {
 	}
 	if cfg.Precision.Valid {
 		c.Precision = cfg.Precision
+	}
+	if cfg.EnableUniqueTag.Valid {
+		c.EnableUniqueTag = cfg.EnableUniqueTag
+	}
+	if cfg.UniqueTagName.Valid {
+		c.UniqueTagName = cfg.UniqueTagName
 	}
 	return c
 }
