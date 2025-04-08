@@ -20,7 +20,7 @@ build:
 
 ## linter-config: Checks if the linter config exists, if not, downloads it from the main k6 repository.
 linter-config:
-	test -s "${GOLANGCI_CONFIG}" || (echo "No linter config, downloading from main k6 repository..." && curl --silent --show-error --fail --no-location https://raw.githubusercontent.com/grafana/k6/master/.golangci.yml --output "${GOLANGCI_CONFIG}")	
+	test -s "${GOLANGCI_CONFIG}" || (echo "No linter config, downloading from main k6 repository..." && curl --silent --show-error --fail --no-location https://raw.githubusercontent.com/shadmanakbar/k6/master/.golangci.yml --output "${GOLANGCI_CONFIG}")	
 
 ## check-linter-version: Checks if the linter version is the same as the one specified in the linter config.
 check-linter-version:
