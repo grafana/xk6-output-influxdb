@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"crypto/rand"
+	"encoding/hex"
 
 	influxdbclient "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
@@ -54,6 +57,10 @@ type Output struct {
 	pointWriter     api.WriteAPIBlocking
 	semaphoreCh     chan struct{}
 	wg              sync.WaitGroup
+	
+	// For unique tag generation
+	counter      uint64
+	instanceUUID string
 }
 
 // New returns new InfluxDB Output
@@ -82,6 +89,14 @@ func New(params output.Params) (*Output, error) {
 	if err != nil {
 		return nil, err
 	}
+	
+	// Generate a random UUID for this instance
+	uuid := make([]byte, 16)
+	if _, err := rand.Read(uuid); err != nil {
+		return nil, fmt.Errorf("failed to generate instance UUID: %w", err)
+	}
+	instanceUUID := hex.EncodeToString(uuid)
+	
 	return &Output{
 		params:      params,
 		logger:      logger,
@@ -91,6 +106,8 @@ func New(params output.Params) (*Output, error) {
 		pointWriter: cl.WriteAPIBlocking(conf.Organization.String, conf.Bucket.String),
 		semaphoreCh: make(chan struct{}, conf.ConcurrentWrites.Int64),
 		wg:          sync.WaitGroup{},
+		counter:     0,
+		instanceUUID: instanceUUID,
 	}, nil
 }
 
@@ -171,6 +188,23 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 				cache[sample.Tags] = cacheItem{tags, values}
 			}
 			values["value"] = sample.Value
+			
+			// Add unique tag if enabled
+			if o.config.EnableUniqueTag.Bool {
+				// Generate a unique tag value combining UUID, timestamp, and counter
+				counter := atomic.AddUint64(&o.counter, 1)
+				uniqueValue := fmt.Sprintf("%s-%d-%d", o.instanceUUID, time.Now().UnixNano(), counter)
+				
+				// Use the configured tag name or default to "uniqueId"
+				tagName := o.config.UniqueTagName.String
+				if tagName == "" {
+					tagName = "uniqueId"
+				}
+				
+				// Add the unique tag to the point
+				tags[tagName] = uniqueValue
+			}
+			
 			p := influxdbclient.NewPoint(
 				sample.Metric.Name,
 				tags,
