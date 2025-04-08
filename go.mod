@@ -1,4 +1,4 @@
-module github.com/grafana/xk6-output-influxdb
+module github.com/shadmanakbar/xk6-output-influxdb
 
 go 1.21
 
