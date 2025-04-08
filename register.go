@@ -2,7 +2,7 @@
 package influxdb
 
 import (
-	"github.com/grafana/xk6-output-influxdb/pkg/influxdb"
+	"github.com/shadmanakbar/xk6-output-influxdb/pkg/influxdb"
 	"go.k6.io/k6/output"
 )
 
