@@ -1,0 +1,14 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: xk6-output-influxdb
+  title: xk6-output-influxdb
+  description: |
+    k6 extension to output real-time test metrics to an InfluxDB 2.x database.
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: grafana/xk6-output-influxdb
+spec:
+  type: library
+  owner: group:default/k6-core
+  lifecycle: production
