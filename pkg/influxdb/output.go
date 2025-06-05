@@ -172,9 +172,20 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 	cache := map[*metrics.TagSet]cacheItem{}
 
 	var points []*write.Point
+	var filteredCount int
+	var totalCount int
+	
 	for _, container := range containers {
 		samples := container.GetSamples()
 		for _, sample := range samples {
+			totalCount++
+			
+			// Filter: only process http_req_duration measurements
+			if sample.Metric.Name != "http_req_duration" {
+				filteredCount++
+				continue
+			}
+			
 			var tags map[string]string
 			values := make(map[string]interface{})
 			if cached, ok := cache[sample.Tags]; ok {
@@ -215,6 +226,15 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 		}
 	}
 
+	// Log filtering statistics
+	if filteredCount > 0 {
+		o.logger.WithFields(logrus.Fields{
+			"total_samples": totalCount,
+			"filtered_out":  filteredCount,
+			"sent_points":   len(points),
+		}).Debug("Filtered samples - only sending http_req_duration measurements")
+	}
+
 	return points
 }
 
@@ -234,6 +254,12 @@ func (o *Output) flushMetrics() {
 
 		start := time.Now()
 		batch := o.batchFromSamples(samples)
+
+		// Only proceed if we have points to send after filtering
+		if len(batch) == 0 {
+			o.logger.Debug("No http_req_duration points to send after filtering")
+			return
+		}
 
 		o.logger.WithField("samples", len(samples)).WithField("points", len(batch)).Debug("Sending metrics points...")
 		if err := o.pointWriter.WritePoint(context.Background(), batch...); err != nil {
