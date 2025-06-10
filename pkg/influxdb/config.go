@@ -24,17 +24,19 @@ type Config struct {
 	TagsAsFields          []string           `json:"tagsAsFields,omitempty" envconfig:"K6_INFLUXDB_TAGS_AS_FIELDS"`
 	EnableUniqueTag       null.Bool          `json:"enableUniqueTag,omitempty" envconfig:"K6_INFLUXDB_ENABLE_UNIQUE_TAG"`
 	UniqueTagName         null.String        `json:"uniqueTagName,omitempty" envconfig:"K6_INFLUXDB_UNIQUE_TAG_NAME"`
+	AllowedMeasurements   []string           `json:"allowedMeasurements,omitempty" envconfig:"K6_INFLUXDB_ALLOWED_MEASUREMENTS"`
 }
 
 // NewConfig creates a new InfluxDB output config with some default values.
 func NewConfig() Config {
 	c := Config{
-		Addr:             null.NewString("http://localhost:8086", false),
-		TagsAsFields:     []string{"vu:int", "iter:int", "url"},
-		ConcurrentWrites: null.NewInt(4, false),
-		PushInterval:     types.NewNullDuration(time.Second, false),
-		EnableUniqueTag:  null.NewBool(false, false),
-		UniqueTagName:    null.NewString("uniqueId", false),
+		Addr:                null.NewString("http://localhost:8086", false),
+		TagsAsFields:        []string{"vu:int", "iter:int", "url"},
+		ConcurrentWrites:    null.NewInt(4, false),
+		PushInterval:        types.NewNullDuration(time.Second, false),
+		EnableUniqueTag:     null.NewBool(false, false),
+		UniqueTagName:       null.NewString("uniqueId", false),
+		AllowedMeasurements: []string{"http_req_duration"}, // Default to only http_req_duration
 	}
 	return c
 }
@@ -73,6 +75,9 @@ func (c Config) Apply(cfg Config) Config {
 	}
 	if cfg.UniqueTagName.Valid {
 		c.UniqueTagName = cfg.UniqueTagName
+	}
+	if len(cfg.AllowedMeasurements) > 0 {
+		c.AllowedMeasurements = cfg.AllowedMeasurements
 	}
 	return c
 }
