@@ -175,13 +175,19 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 	var filteredCount int
 	var totalCount int
 	
+	// Create a map for faster lookup of allowed measurements
+	allowedMeasurements := make(map[string]bool)
+	for _, measurement := range o.config.AllowedMeasurements {
+		allowedMeasurements[measurement] = true
+	}
+	
 	for _, container := range containers {
 		samples := container.GetSamples()
 		for _, sample := range samples {
 			totalCount++
 			
-			// Filter: only process http_req_duration measurements
-			if sample.Metric.Name != "http_req_duration" {
+			// Filter: only process measurements that are in the allowed list
+			if !allowedMeasurements[sample.Metric.Name] {
 				filteredCount++
 				continue
 			}
@@ -229,10 +235,11 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 	// Log filtering statistics
 	if filteredCount > 0 {
 		o.logger.WithFields(logrus.Fields{
-			"total_samples": totalCount,
-			"filtered_out":  filteredCount,
-			"sent_points":   len(points),
-		}).Debug("Filtered samples - only sending http_req_duration measurements")
+			"total_samples":       totalCount,
+			"filtered_out":        filteredCount,
+			"sent_points":         len(points),
+			"allowed_measurements": strings.Join(o.config.AllowedMeasurements, ","),
+		}).Debug("Filtered samples - only sending allowed measurements")
 	}
 
 	return points
@@ -257,7 +264,7 @@ func (o *Output) flushMetrics() {
 
 		// Only proceed if we have points to send after filtering
 		if len(batch) == 0 {
-			o.logger.Debug("No http_req_duration points to send after filtering")
+			o.logger.Debug("No allowed measurement points to send after filtering")
 			return
 		}
 
