@@ -21,7 +21,6 @@ func TestParseURL(t *testing.T) {
 		"http://localhost:8086/bucketname": {Addr: null.StringFrom("http://localhost:8086"), Bucket: null.StringFrom("bucketname")},
 	}
 	for str, data := range testdata {
-		str, data := str, data
 		t.Run(str, func(t *testing.T) {
 			t.Parallel()
 			config, err := parseURL(str)
