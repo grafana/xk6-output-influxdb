@@ -7,7 +7,7 @@ networks:
 
 services:
   influxdb:
-    image: influxdb:2.0-alpine
+    image: influxdb:2.0-alpine@sha256:28b27ba51abbddb2113c728b9fb5e23261733a9bceb995402012e69aa34273d4
     networks:
       - k6
       - grafana
