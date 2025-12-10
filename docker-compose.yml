@@ -7,7 +7,7 @@ networks:
 
 services:
   influxdb:
-    image: influxdb:2.0-alpine
+    image: influxdb:2.0-alpine@sha256:28b27ba51abbddb2113c728b9fb5e23261733a9bceb995402012e69aa34273d4
     networks:
       - k6
       - grafana
@@ -23,7 +23,7 @@ services:
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=EEKpryGZk8pVDXmIuy484BKUxM5jOEDv7YNoeNZUbsNbpbPbP6kK_qY9Zsyw7zNnlZ7pHG16FYzNaqwLMBUz8g==
 
   grafana:
-    image: grafana/grafana:8.2.6
+    image: grafana/grafana:8.5.27@sha256:b43abed8a2b8c5a4055c3729d77ae11c9646c4b9feefb5c136b7c67dcdad21c0
     networks:
       - grafana
       - influxdb
