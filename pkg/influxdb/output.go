@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"math/rand"
 
 	influxdbclient "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
@@ -18,6 +19,7 @@ import (
 	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
 )
+
 
 func init() {
 	// disable the internal influxdb log
@@ -171,6 +173,10 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 				cache[sample.Tags] = cacheItem{tags, values}
 			}
 			values["value"] = sample.Value
+			if o.config.Jitter.Int64 > 0 {
+				offset := time.Duration(rand.Intn(int(o.config.Jitter.Int64)))
+				sample.Time = sample.Time.Add(offset * time.Nanosecond)
+			}
 			p := influxdbclient.NewPoint(
 				sample.Metric.Name,
 				tags,
