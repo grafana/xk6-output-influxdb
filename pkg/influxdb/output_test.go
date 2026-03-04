@@ -122,7 +122,7 @@ func TestOutputFlushMetrics(t *testing.T) {
 		rw.WriteHeader(http.StatusNoContent)
 	}, func(tb testing.TB, c *Output) {
 		samples := make(metrics.Samples, 10)
-		for i := 0; i < len(samples); i++ {
+		for i := range samples {
 			metric, err := registry.NewMetric("test_gauge", metrics.Gauge)
 			require.NoError(tb, err)
 			samples[i] = metrics.Sample{
