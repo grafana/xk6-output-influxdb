@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,9 +163,7 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 			values := make(map[string]any)
 			if cached, ok := cache[sample.Tags]; ok {
 				tags = cached.tags
-				for k, v := range cached.values {
-					values[k] = v
-				}
+				maps.Copy(values, cached.values)
 			} else {
 				tags = sample.Tags.Map()
 				o.extractTagsToValues(tags, values)
