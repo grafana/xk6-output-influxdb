@@ -17,6 +17,7 @@ type Config struct {
 	Organization          null.String        `json:"organization" envconfig:"K6_INFLUXDB_ORGANIZATION"`
 	Bucket                null.String        `json:"bucket" envconfig:"K6_INFLUXDB_BUCKET"`
 	Token                 null.String        `json:"token" envconfig:"K6_INFLUXDB_TOKEN"`
+	Jitter                null.Int       	 `json:"token" envconfig:"K6_INFLUXDB_JITTER"`
 	InsecureSkipTLSVerify null.Bool          `json:"insecureSkipTLSVerify,omitempty" envconfig:"K6_INFLUXDB_INSECURE"`
 	PushInterval          types.NullDuration `json:"pushInterval,omitempty" envconfig:"K6_INFLUXDB_PUSH_INTERVAL"`
 	ConcurrentWrites      null.Int           `json:"concurrentWrites,omitempty" envconfig:"K6_INFLUXDB_CONCURRENT_WRITES"`
@@ -31,6 +32,7 @@ func NewConfig() Config {
 		TagsAsFields:     []string{"vu:int", "iter:int", "url"},
 		ConcurrentWrites: null.NewInt(4, false),
 		PushInterval:     types.NewNullDuration(time.Second, false),
+		Jitter:     	  null.NewInt(0, false),
 	}
 	return c
 }
@@ -48,6 +50,9 @@ func (c Config) Apply(cfg Config) Config {
 	}
 	if cfg.Token.Valid {
 		c.Token = cfg.Token
+	}
+	if cfg.Jitter.Valid {
+		c.Jitter = cfg.Jitter
 	}
 	if cfg.InsecureSkipTLSVerify.Valid {
 		c.InsecureSkipTLSVerify = cfg.InsecureSkipTLSVerify
