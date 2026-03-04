@@ -72,7 +72,7 @@ func TestExtractTagsToValues(t *testing.T) {
 		"floatField":   "3.14",
 		"intField":     "12345",
 	}
-	values := o.extractTagsToValues(tags, map[string]interface{}{})
+	values := o.extractTagsToValues(tags, map[string]any{})
 
 	require.Equal(t, "string", values["stringField"])
 	require.Equal(t, "string2", values["stringField2"])
