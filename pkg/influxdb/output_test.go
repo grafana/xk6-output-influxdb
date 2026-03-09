@@ -72,7 +72,7 @@ func TestExtractTagsToValues(t *testing.T) {
 		"floatField":   "3.14",
 		"intField":     "12345",
 	}
-	values := o.extractTagsToValues(tags, map[string]interface{}{})
+	values := o.extractTagsToValues(tags, map[string]any{})
 
 	require.Equal(t, "string", values["stringField"])
 	require.Equal(t, "string2", values["stringField2"])
@@ -122,7 +122,7 @@ func TestOutputFlushMetrics(t *testing.T) {
 		rw.WriteHeader(http.StatusNoContent)
 	}, func(tb testing.TB, c *Output) {
 		samples := make(metrics.Samples, 10)
-		for i := 0; i < len(samples); i++ {
+		for i := range samples {
 			metric, err := registry.NewMetric("test_gauge", metrics.Gauge)
 			require.NoError(tb, err)
 			samples[i] = metrics.Sample{

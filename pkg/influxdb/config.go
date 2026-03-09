@@ -17,10 +17,10 @@ type Config struct {
 	Organization          null.String        `json:"organization" envconfig:"K6_INFLUXDB_ORGANIZATION"`
 	Bucket                null.String        `json:"bucket" envconfig:"K6_INFLUXDB_BUCKET"`
 	Token                 null.String        `json:"token" envconfig:"K6_INFLUXDB_TOKEN"`
-	InsecureSkipTLSVerify null.Bool          `json:"insecureSkipTLSVerify,omitempty" envconfig:"K6_INFLUXDB_INSECURE"`
-	PushInterval          types.NullDuration `json:"pushInterval,omitempty" envconfig:"K6_INFLUXDB_PUSH_INTERVAL"`
-	ConcurrentWrites      null.Int           `json:"concurrentWrites,omitempty" envconfig:"K6_INFLUXDB_CONCURRENT_WRITES"`
-	Precision             types.NullDuration `json:"precision,omitempty" envconfig:"K6_INFLUXDB_PRECISION"`
+	InsecureSkipTLSVerify null.Bool          `json:"insecureSkipTLSVerify" envconfig:"K6_INFLUXDB_INSECURE"`
+	PushInterval          types.NullDuration `json:"pushInterval" envconfig:"K6_INFLUXDB_PUSH_INTERVAL"`
+	ConcurrentWrites      null.Int           `json:"concurrentWrites" envconfig:"K6_INFLUXDB_CONCURRENT_WRITES"`
+	Precision             types.NullDuration `json:"precision" envconfig:"K6_INFLUXDB_PRECISION"`
 	TagsAsFields          []string           `json:"tagsAsFields,omitempty" envconfig:"K6_INFLUXDB_TAGS_AS_FIELDS"`
 }
 
