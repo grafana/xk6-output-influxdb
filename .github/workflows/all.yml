@@ -11,4 +11,4 @@ on:
 
 jobs:
   checks:
-    uses: grafana/k6-ci/.github/workflows/all.yml@c9fd2482f918a4ece532611480ad59abeef86f1b # main
+    uses: grafana/k6-ci/.github/workflows/all.yml@8a1f85f48925d5cf4dc5c16ae692323b98bbd41f # main
