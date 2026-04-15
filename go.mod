@@ -7,7 +7,7 @@ require (
 	github.com/mstoykov/envconfig v1.5.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
-	go.k6.io/k6 v1.6.1
+	go.k6.io/k6 v1.7.1
 	gopkg.in/guregu/null.v3 v3.3.0
 )
 
