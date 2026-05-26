@@ -16,8 +16,8 @@ import (
 	"github.com/influxdata/influxdb-client-go/v2/api/write"
 	influxdblog "github.com/influxdata/influxdb-client-go/v2/log"
 	"github.com/sirupsen/logrus"
-	"go.k6.io/k6/metrics"
-	"go.k6.io/k6/output"
+	"go.k6.io/k6/v2/metrics"
+	"go.k6.io/k6/v2/output"
 )
 
 func init() {
