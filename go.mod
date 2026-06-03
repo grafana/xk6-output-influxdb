@@ -1,8 +1,6 @@
 module github.com/grafana/xk6-output-influxdb
 
-go 1.25.0
-
-toolchain go1.25.10
+go 1.25.11
 
 require (
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0
