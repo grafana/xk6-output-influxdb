@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/v2/lib/types"
 
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/guregu/null.v3"

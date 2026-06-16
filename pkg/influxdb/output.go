@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,8 +17,8 @@ import (
 	"github.com/influxdata/influxdb-client-go/v2/api/write"
 	influxdblog "github.com/influxdata/influxdb-client-go/v2/log"
 	"github.com/sirupsen/logrus"
-	"go.k6.io/k6/metrics"
-	"go.k6.io/k6/output"
+	"go.k6.io/k6/v2/metrics"
+	"go.k6.io/k6/v2/output"
 )
 
 
@@ -123,10 +124,10 @@ func (o *Output) Stop() error {
 	return nil
 }
 
-func (o *Output) extractTagsToValues(tags map[string]string, values map[string]interface{}) map[string]interface{} {
+func (o *Output) extractTagsToValues(tags map[string]string, values map[string]any) map[string]any {
 	for tag, kind := range o.fieldKinds {
 		if val, ok := tags[tag]; ok {
-			var v interface{}
+			var v any
 			var err error
 			switch kind {
 			case String:
@@ -152,7 +153,7 @@ func (o *Output) extractTagsToValues(tags map[string]string, values map[string]i
 func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write.Point {
 	type cacheItem struct {
 		tags   map[string]string
-		values map[string]interface{}
+		values map[string]any
 	}
 	cache := map[*metrics.TagSet]cacheItem{}
 
@@ -161,12 +162,10 @@ func (o *Output) batchFromSamples(containers []metrics.SampleContainer) []*write
 		samples := container.GetSamples()
 		for _, sample := range samples {
 			var tags map[string]string
-			values := make(map[string]interface{})
+			values := make(map[string]any)
 			if cached, ok := cache[sample.Tags]; ok {
 				tags = cached.tags
-				for k, v := range cached.values {
-					values[k] = v
-				}
+				maps.Copy(values, cached.values)
 			} else {
 				tags = sample.Tags.Map()
 				o.extractTagsToValues(tags, values)
