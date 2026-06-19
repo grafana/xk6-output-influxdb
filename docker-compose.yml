@@ -23,7 +23,7 @@ services:
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=EEKpryGZk8pVDXmIuy484BKUxM5jOEDv7YNoeNZUbsNbpbPbP6kK_qY9Zsyw7zNnlZ7pHG16FYzNaqwLMBUz8g==
 
   grafana:
-    image: grafana/grafana:12.4.4@sha256:378f94b054e5384cd74322cbf7542cff6a43e068e4011f81ea5e75323247df02
+    image: grafana/grafana:13.0.2@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     networks:
       - grafana
       - influxdb
