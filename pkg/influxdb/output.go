@@ -55,6 +55,11 @@ type Output struct {
 	pointWriter     api.WriteAPIBlocking
 	semaphoreCh     chan struct{}
 	wg              sync.WaitGroup
+
+	// aggregator and aggFlusher are non-nil only when aggregation is enabled.
+	// When enabled, the raw per-sample path is replaced by JMeter-style aggregation.
+	aggregator *aggregator
+	aggFlusher *output.PeriodicFlusher
 }
 
 // New returns new InfluxDB Output
@@ -83,7 +88,7 @@ func New(params output.Params) (*Output, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Output{
+	o := &Output{
 		params:      params,
 		logger:      logger,
 		client:      cl,
@@ -92,7 +97,27 @@ func New(params output.Params) (*Output, error) {
 		pointWriter: cl.WriteAPIBlocking(conf.Organization.String, conf.Bucket.String),
 		semaphoreCh: make(chan struct{}, conf.ConcurrentWrites.Int64),
 		wg:          sync.WaitGroup{},
-	}, nil
+	}
+	if conf.Aggregation.Enabled.Bool {
+		if err := validateAggregation(conf); err != nil {
+			return nil, err
+		}
+		o.aggregator = newAggregator(conf)
+		logger.WithField("flushInterval", time.Duration(conf.Aggregation.FlushInterval.Duration)).
+			Info("InfluxDB aggregation enabled: sending JMeter-style aggregated metrics")
+	}
+	return o, nil
+}
+
+// validateAggregation checks aggregation options. It only runs when aggregation
+// is enabled, so the default raw path gains no new failure modes.
+func validateAggregation(conf Config) error {
+	for _, p := range conf.Aggregation.Percentiles {
+		if p <= 0 || p >= 100 {
+			return fmt.Errorf("the aggregation percentile %v must be between 0 and 100 (exclusive)", p)
+		}
+	}
+	return nil
 }
 
 // Description returns a human-readable description of the output.
@@ -107,17 +132,39 @@ func (o *Output) Start() error {
 	if err != nil {
 		return err
 	}
-	o.logger.Debug("Started")
 	o.periodicFlusher = pf
+
+	// When aggregation is enabled, flushMetrics only drains the buffer into the
+	// aggregator; a separate, slower flusher emits the aggregated summaries.
+	if o.aggregator != nil {
+		apf, err := output.NewPeriodicFlusher(
+			time.Duration(o.config.Aggregation.FlushInterval.Duration), o.flushAggregated)
+		if err != nil {
+			// Don't leave the buffer flusher running if the aggregation flusher
+			// failed to start.
+			o.periodicFlusher.Stop()
+			return err
+		}
+		o.aggFlusher = apf
+	}
+
+	o.logger.Debug("Started")
 	return nil
 }
 
-// Stop flushes any remaining metrics and stops the goroutine.
+// Stop flushes any remaining metrics and stops the goroutines.
 func (o *Output) Stop() error {
 	o.logger.Debug("Stopping...")
+	// Stop the buffer flusher first so no new samples are ingested, then flush
+	// the final aggregation window (PeriodicFlusher.Stop runs the callback once more).
 	o.periodicFlusher.Stop()
-	o.client.Close()
+	if o.aggFlusher != nil {
+		o.aggFlusher.Stop()
+	}
+	// Wait for every in-flight write to finish before closing the client, so the
+	// final flush (raw or aggregated) is never cut off mid-request.
 	o.wg.Wait()
+	o.client.Close()
 	o.logger.Debug("Stopped")
 	return nil
 }
@@ -189,6 +236,13 @@ func (o *Output) flushMetrics() {
 		return
 	}
 
+	// Aggregation path: fold samples into the rolling state in memory (no network
+	// I/O here). The aggregated summaries are written by flushAggregated.
+	if o.aggregator != nil {
+		o.aggregator.ingest(samples)
+		return
+	}
+
 	o.wg.Add(1)
 	o.semaphoreCh <- struct{}{}
 	go func() {
@@ -218,6 +272,128 @@ func (o *Output) flushMetrics() {
 			o.logger.WithField("t", d).Warn(msg)
 		}
 	}()
+}
+
+// flushAggregated drains the current aggregation window and writes the JMeter-style
+// summary points. It mirrors flushMetrics' goroutine/semaphore structure.
+func (o *Output) flushAggregated() {
+	snap := o.aggregator.drain()
+	if len(snap.groups) == 0 && snap.users.count == 0 && snap.totalSent == 0 && snap.totalReceived == 0 {
+		return
+	}
+
+	o.wg.Add(1)
+	o.semaphoreCh <- struct{}{}
+	go func() {
+		defer func() {
+			<-o.semaphoreCh
+			o.wg.Done()
+		}()
+
+		start := time.Now()
+		batch := aggregateBatch(snap, start)
+
+		o.logger.WithField("points", len(batch)).Debug("Sending aggregated points...")
+		if err := o.pointWriter.WritePoint(context.Background(), batch...); err != nil {
+			o.logger.WithError(err).
+				WithField("elapsed", time.Since(start)).
+				WithField("points", len(batch)).
+				Error("Couldn't send aggregated points")
+			return
+		}
+		o.logger.WithField("elapsed", time.Since(start)).Debug("Aggregated points have been sent")
+	}()
+}
+
+// aggregateBatch turns a drained aggregation window into InfluxDB points,
+// replicating JMeter's schema: per (name, group) an ok/ko/all triple, per-error
+// rows, a cumulative "all" rollup, and an "internal" thread-metrics row.
+func aggregateBatch(snap aggSnapshot, ts time.Time) []*write.Point {
+	var points []*write.Point
+	var totalErrors int64
+	// globalValues collects every response time across all groups so the cumulative
+	// "all" row can report exact run-wide stats/percentiles (averaging per-group
+	// percentiles would be statistically wrong).
+	var globalValues []float64
+
+	for _, m := range snap.groups {
+		resultValues := []struct {
+			result string
+			values []float64
+		}{
+			{statusOK, m.okValues},
+			{statusKO, m.koValues},
+			{statusAll, m.allValues},
+		}
+		for _, rv := range resultValues {
+			// Always emit the "all" row; skip empty ok/ko rows.
+			if len(rv.values) == 0 && rv.result != statusAll {
+				continue
+			}
+			fields := statsFields(rv.values, snap.percentiles)
+			fields["hits"] = m.hits
+
+			tags := copyTags(m.tags)
+			tags[tagResult] = rv.result
+			points = append(points, influxdbclient.NewPoint(snap.measurement, tags, fields, ts))
+		}
+
+		// Per-error breakdown (response code + message), like JMeter's error metrics.
+		for ek, c := range m.errors {
+			tags := copyTags(m.tags)
+			tags[tagResult] = statusKO
+			tags[tagStatus] = ek.status
+			tags[tagError] = ek.msg
+			points = append(points, influxdbclient.NewPoint(
+				snap.measurement, tags, map[string]any{"errors": c}, ts))
+		}
+
+		// Per-HTTP-status-code counts (result=status), including successful 2xx.
+		// Count-only rows: counts are additive across windows, so a response-code
+		// distribution charts correctly at any time range (unlike percentiles).
+		for status, c := range m.statusCounts {
+			tags := copyTags(m.tags)
+			tags[tagResult] = resultStatusCount
+			tags[tagStatus] = status
+			points = append(points, influxdbclient.NewPoint(
+				snap.measurement, tags, map[string]any{"count": c}, ts))
+		}
+
+		globalValues = append(globalValues, m.allValues...)
+		totalErrors += m.failures
+	}
+
+	// Cumulative "all" transaction across every group: exact run-wide
+	// count/avg/min/max/percentiles plus errors. data_sent/data_received are
+	// reported here as global totals since k6 measures them at the connection
+	// level and they cannot be attributed to individual requests.
+	cumulative := statsFields(globalValues, snap.percentiles)
+	cumulative["hits"] = int64(len(globalValues))
+	cumulative["errors"] = totalErrors
+	cumulative["data_sent"] = snap.totalSent
+	cumulative["data_received"] = snap.totalReceived
+	points = append(points, influxdbclient.NewPoint(
+		snap.measurement,
+		map[string]string{tagName: statusAll, tagResult: statusAll, "group": statusAll},
+		cumulative,
+		ts,
+	))
+
+	// Thread / active-VU metrics, like JMeter's "internal" transaction row.
+	if snap.users.count > 0 {
+		points = append(points, influxdbclient.NewPoint(
+			snap.measurement,
+			map[string]string{tagName: "internal", "group": "internal"},
+			map[string]any{
+				"vus_min":  snap.users.min,
+				"vus_max":  snap.users.max,
+				"vus_mean": snap.users.sum / float64(snap.users.count),
+			},
+			ts,
+		))
+	}
+
+	return points
 }
 
 // MakeFieldKinds reads the Config and returns a lookup map of tag names to

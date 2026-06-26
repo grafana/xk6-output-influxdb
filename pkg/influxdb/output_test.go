@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,6 +142,101 @@ func TestOutputFlushMetrics(t *testing.T) {
 		c.AddMetricSamples([]metrics.SampleContainer{samples})
 		c.AddMetricSamples([]metrics.SampleContainer{samples})
 	})
+}
+
+func TestAggregationDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var body string
+	registry := metrics.NewRegistry()
+
+	testOutputCycle(t, func(rw http.ResponseWriter, r *http.Request) {
+		b := bytes.NewBuffer(nil)
+		_, _ = io.Copy(b, r.Body)
+		mu.Lock()
+		body += b.String()
+		mu.Unlock()
+		rw.WriteHeader(http.StatusNoContent)
+	}, func(tb testing.TB, c *Output) {
+		require.Nil(tb, c.aggregator, "aggregation must be off by default")
+		metric, err := registry.NewMetric("http_req_duration", metrics.Trend)
+		require.NoError(tb, err)
+		c.AddMetricSamples([]metrics.SampleContainer{metrics.Samples{{
+			TimeSeries: metrics.TimeSeries{
+				Metric: metric,
+				Tags:   registry.RootTagSet().WithTagsFromMap(map[string]string{"name": "GET /x"}),
+			},
+			Time:  time.Now(),
+			Value: 1.0,
+		}}})
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, body, "http_req_duration", "raw per-sample measurement expected")
+	assert.NotContains(t, body, "k6_aggregated", "no aggregated measurement when disabled")
+}
+
+func TestOutputAggregated(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var body string
+	registry := metrics.NewRegistry()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		b := bytes.NewBuffer(nil)
+		_, _ = io.Copy(b, r.Body)
+		mu.Lock()
+		body += b.String()
+		mu.Unlock()
+		rw.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	c, err := New(output.Params{
+		Logger:         logrus.New(),
+		ConfigArgument: fmt.Sprintf("%s/testbucket", ts.URL),
+		JSONConfig: json.RawMessage(
+			`{"aggregation":{"enabled":true,"flushInterval":"50ms","percentiles":[95,99]}}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, c.aggregator)
+	require.NoError(t, c.Start())
+
+	dur, err := registry.NewMetric("http_req_duration", metrics.Trend)
+	require.NoError(t, err)
+
+	mkSample := func(v float64, tags map[string]string) metrics.Sample {
+		return metrics.Sample{
+			TimeSeries: metrics.TimeSeries{
+				Metric: dur,
+				Tags:   registry.RootTagSet().WithTagsFromMap(tags),
+			},
+			Time:  time.Now(),
+			Value: v,
+		}
+	}
+	c.AddMetricSamples([]metrics.SampleContainer{metrics.Samples{
+		mkSample(100, map[string]string{"name": "GET /x", "group": "g", "testid": "run1", "vu": "1", "expected_response": "true"}),
+		mkSample(200, map[string]string{"name": "GET /x", "group": "g", "testid": "run1", "vu": "2", "expected_response": "true"}),
+		mkSample(500, map[string]string{"name": "GET /x", "group": "g", "testid": "run1", "vu": "3", "expected_response": "false", "status": "500"}),
+	}})
+
+	require.NoError(t, c.Stop()) // Stop flushes the final window and waits for writes.
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, body, "k6_aggregated", "aggregated measurement expected")
+	assert.Contains(t, body, "result=ok")
+	assert.Contains(t, body, "result=ko")
+	assert.Contains(t, body, "result=all")
+	assert.Contains(t, body, "name=all", "cumulative rollup row emitted")
+	assert.Contains(t, body, "name=GET", "transaction name carried as tag")
+	assert.Contains(t, body, "testid=run1", "custom tag carried automatically (no extraTags config)")
+	assert.Contains(t, body, "p95")
+	assert.NotContains(t, body, "vu=", "high-cardinality vu tag must be dropped")
 }
 
 func TestMakeFieldKinds(t *testing.T) {

@@ -51,6 +51,34 @@ Options for fine-grained control for flushing and connections.
 | K6_INFLUXDB_PRECISION         | 1ns | The timestamp [Precision](https://docs.influxdata.com/influxdb/v2.0/reference/glossary/#precision). |
 
 
+## Aggregated metrics (JMeter-style)
+
+By default this output writes **one InfluxDB point per metric sample**, which can overwhelm InfluxDB under high load. You can instead enable optional **aggregation**, which buffers samples over a time window and writes compact JMeter-style summaries (count / avg / min / max / percentiles per request and group, split into `ok`/`ko`/`all`), drastically reducing the number of points written.
+
+Aggregation is **off by default**; when off, behavior is unchanged. Enable it with `K6_INFLUXDB_AGGREGATION_ENABLED=true`.
+
+Your tags — both k6 built-in tags and your own custom tags (set via test-wide `tags` in options or per-request) — are carried into the aggregated output **automatically**, with no extra configuration. Only a small denylist of known high-cardinality tags (`vu`, `iter`, `url`) is excluded so the series count stays manageable.
+
+| ENV | Default | Description |
+|-----|---------|-------------|
+| K6_INFLUXDB_AGGREGATION_ENABLED        | false | When `true`, send aggregated summaries instead of raw per-sample points. |
+| K6_INFLUXDB_AGGREGATION_FLUSH_INTERVAL | 5s    | How often aggregated summaries are written. |
+| K6_INFLUXDB_AGGREGATION_MEASUREMENT    | k6_aggregated | InfluxDB measurement name for aggregated points. |
+| K6_INFLUXDB_AGGREGATION_PERCENTILES    | 90,95,99 | Response-time percentiles to compute (rendered as fields `p90`, `p95`, ...). |
+| K6_INFLUXDB_AGGREGATION_DROP_TAGS      | vu,iter,url | Comma-separated denylist of high-cardinality tags excluded from the aggregation grouping. Every other tag (built-in or custom) is kept automatically. |
+
+**Schema of aggregated points** (measurement `k6_aggregated`):
+
+- Tags: `name` (request name), `group`, `result` (`ok`/`ko`/`all`/`status`), plus every other tag on the sample (your custom tags such as `testid`, plus built-in tags like `method`, `scenario`) except those in the denylist.
+- Fields (per request/group row): `count`, `avg`, `min`, `max`, `hits`, and one field per configured percentile (`p90`, `p95`, `p99`, ...).
+- A per-error row (tags `result=ko`, `status` = HTTP code, `error` = message) with `errors` count.
+- Per-HTTP-status-code rows (tags `result=status`, `status` = HTTP code such as `200`/`404`/`0`) with a `count` field. These give a full response-code distribution — **including successful 2xx** — even though the main ok/ko/all rows omit the status code. Counts are additive across flush windows, so a response-code chart is exact at any time range. (`status=0` denotes a transport-level failure: connection refused, timeout, DNS, etc.)
+- A cumulative row (`name=all`, `result=all`) with exact run-wide `count`, `avg`, `min`, `max`, percentiles (`p90`/`p95`/...), `hits`, `errors`, plus `data_sent` and `data_received`. (`data_sent`/`data_received` are run-wide totals because k6 measures them at the connection level and cannot attribute them to individual requests.)
+- An `name=internal` row with active-VU metrics `vus_min`, `vus_max`, `vus_mean`.
+
+The response-time signal is k6's `http_req_duration`; `ok`/`ko` is derived from the sample's `expected_response` tag. Note the synthetic ok/ko/all split is exposed as the `result` tag, kept separate from k6's built-in `status` (HTTP status code) tag.
+
+
 # Docker Compose
 
 This repo includes a [docker-compose.yml](./docker-compose.yml) file that starts InfluxDB, Grafana and k6. This is just a quick setup to show the usage; for real use case you might want to deploy outside of docker, use volumes and probably update versions.
