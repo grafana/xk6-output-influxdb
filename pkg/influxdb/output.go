@@ -117,6 +117,12 @@ func validateAggregation(conf Config) error {
 			return fmt.Errorf("the aggregation percentile %v must be between 0 and 100 (exclusive)", p)
 		}
 	}
+	switch conf.Aggregation.Schema.String {
+	case "", schemaK6, schemaJMeter:
+	default:
+		return fmt.Errorf("the aggregation schema %q must be %q or %q",
+			conf.Aggregation.Schema.String, schemaK6, schemaJMeter)
+	}
 	return nil
 }
 
@@ -305,10 +311,50 @@ func (o *Output) flushAggregated() {
 	}()
 }
 
-// aggregateBatch turns a drained aggregation window into InfluxDB points,
-// replicating JMeter's schema: per (name, group) an ok/ko/all triple, per-error
-// rows, a cumulative "all" rollup, and an "internal" thread-metrics row.
+// baseTags returns schema's tag map for one sampler group's raw grouping tags
+// (name, group, and any pass-through custom tags), per schema.combineTransaction/
+// transactionTag/droppedTags.
+func baseTags(schema schemaDef, tags map[string]string) map[string]string {
+	if !schema.combineTransaction {
+		return copyTags(tags)
+	}
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		if k == tagName || k == tagGroup || schema.droppedTags[k] {
+			continue
+		}
+		out[k] = v
+	}
+	name, group := tags[tagName], tags[tagGroup]
+	switch {
+	case group != "" && name != "":
+		out[schema.transactionTag] = group + "::" + name
+	case group != "":
+		out[schema.transactionTag] = group
+	default:
+		out[schema.transactionTag] = name
+	}
+	return out
+}
+
+// sentinelTransactionTags returns schema's tag map for a synthetic,
+// non-sample-derived row (the cumulative "all" rollup or the "internal"
+// thread-metrics row).
+func sentinelTransactionTags(schema schemaDef, name string) map[string]string {
+	if schema.combineTransaction {
+		return map[string]string{schema.transactionTag: name}
+	}
+	return map[string]string{tagName: name, tagGroup: name}
+}
+
+// aggregateBatch turns a drained aggregation window into InfluxDB points, per
+// the active schema: per transaction an ok/ko/all triple, per-response-code
+// count rows, a cumulative "all" rollup, and an "internal" thread-metrics row.
+// rb/sb (per-request byte counts) and startedT/endedT (threads started/ended
+// per interval) are never emitted -- k6 has no equivalent per-request data.
 func aggregateBatch(snap aggSnapshot, ts time.Time) []*write.Point {
+	schema := schemaFor(snap.schema)
+
 	var points []*write.Point
 	var totalErrors int64
 	// globalValues collects every response time across all groups so the cumulative
@@ -330,31 +376,24 @@ func aggregateBatch(snap aggSnapshot, ts time.Time) []*write.Point {
 			if len(rv.values) == 0 && rv.result != statusAll {
 				continue
 			}
-			fields := statsFields(rv.values, snap.percentiles)
-			fields["hits"] = m.hits
+			fields := statsFields(rv.values, snap.percentiles, schema.percentileField)
+			fields[schema.hitField] = m.hits
 
-			tags := copyTags(m.tags)
+			tags := baseTags(schema, m.tags)
 			tags[tagResult] = rv.result
 			points = append(points, influxdbclient.NewPoint(snap.measurement, tags, fields, ts))
 		}
 
-		// Per-error breakdown (response code + message), like JMeter's error metrics.
-		for ek, c := range m.errors {
-			tags := copyTags(m.tags)
-			tags[tagResult] = statusKO
-			tags[tagStatus] = ek.status
-			tags[tagError] = ek.msg
-			points = append(points, influxdbclient.NewPoint(
-				snap.measurement, tags, map[string]any{"errors": c}, ts))
-		}
-
-		// Per-HTTP-status-code counts (result=status), including successful 2xx.
+		// Per-response-code counts, including successful 2xx -- mirrors JMeter's
+		// own per-response-code rows, which carry no ok/ko/all (statut) tag.
 		// Count-only rows: counts are additive across windows, so a response-code
 		// distribution charts correctly at any time range (unlike percentiles).
-		for status, c := range m.statusCounts {
-			tags := copyTags(m.tags)
-			tags[tagResult] = resultStatusCount
-			tags[tagStatus] = status
+		for ek, c := range m.statusCounts {
+			tags := baseTags(schema, m.tags)
+			tags[schema.responseCodeTag] = ek.status
+			if !schema.omitSuccessMessage || ek.msg != okMessage {
+				tags[schema.responseMessageTag] = ek.msg
+			}
 			points = append(points, influxdbclient.NewPoint(
 				snap.measurement, tags, map[string]any{"count": c}, ts))
 		}
@@ -366,28 +405,28 @@ func aggregateBatch(snap aggSnapshot, ts time.Time) []*write.Point {
 	// Cumulative "all" transaction across every group: exact run-wide
 	// count/avg/min/max/percentiles plus errors. data_sent/data_received are
 	// reported here as global totals since k6 measures them at the connection
-	// level and they cannot be attributed to individual requests.
-	cumulative := statsFields(globalValues, snap.percentiles)
-	cumulative["hits"] = int64(len(globalValues))
-	cumulative["errors"] = totalErrors
-	cumulative["data_sent"] = snap.totalSent
-	cumulative["data_received"] = snap.totalReceived
-	points = append(points, influxdbclient.NewPoint(
-		snap.measurement,
-		map[string]string{tagName: statusAll, tagResult: statusAll, "group": statusAll},
-		cumulative,
-		ts,
-	))
+	// level and cannot be attributed to individual requests; they have no JMeter
+	// equivalent, so schema.includeConnectionTotals is false in jmeter schema.
+	cumulative := statsFields(globalValues, snap.percentiles, schema.percentileField)
+	cumulative[schema.hitField] = int64(len(globalValues))
+	cumulative[schema.countErrorField] = totalErrors
+	if schema.includeConnectionTotals {
+		cumulative["data_sent"] = snap.totalSent
+		cumulative["data_received"] = snap.totalReceived
+	}
+	cumulativeTags := sentinelTransactionTags(schema, statusAll)
+	cumulativeTags[tagResult] = statusAll
+	points = append(points, influxdbclient.NewPoint(snap.measurement, cumulativeTags, cumulative, ts))
 
 	// Thread / active-VU metrics, like JMeter's "internal" transaction row.
 	if snap.users.count > 0 {
 		points = append(points, influxdbclient.NewPoint(
 			snap.measurement,
-			map[string]string{tagName: "internal", "group": "internal"},
+			sentinelTransactionTags(schema, "internal"),
 			map[string]any{
-				"vus_min":  snap.users.min,
-				"vus_max":  snap.users.max,
-				"vus_mean": snap.users.sum / float64(snap.users.count),
+				schema.minActiveField:  snap.users.min,
+				schema.maxActiveField:  snap.users.max,
+				schema.meanActiveField: snap.users.sum / float64(snap.users.count),
 			},
 			ts,
 		))

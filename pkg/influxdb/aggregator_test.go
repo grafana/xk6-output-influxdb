@@ -30,12 +30,20 @@ func TestPercentileField(t *testing.T) {
 	assert.Equal(t, "p99_9", percentileField(99.9))
 }
 
+func TestJMeterPercentileField(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "pct90.0", jmeterPercentileField(90))
+	assert.Equal(t, "pct95.0", jmeterPercentileField(95))
+	assert.Equal(t, "pct99.9", jmeterPercentileField(99.9))
+}
+
 func TestStatsFields(t *testing.T) {
 	t.Parallel()
 
 	t.Run("empty", func(t *testing.T) {
 		t.Parallel()
-		f := statsFields(nil, []float64{95})
+		f := statsFields(nil, []float64{95}, percentileField)
 		assert.Equal(t, int64(0), f["count"])
 		_, hasAvg := f["avg"]
 		assert.False(t, hasAvg)
@@ -43,13 +51,20 @@ func TestStatsFields(t *testing.T) {
 
 	t.Run("values", func(t *testing.T) {
 		t.Parallel()
-		f := statsFields([]float64{10, 20, 30, 40}, []float64{90, 99})
+		f := statsFields([]float64{10, 20, 30, 40}, []float64{90, 99}, percentileField)
 		assert.Equal(t, int64(4), f["count"])
 		assert.InDelta(t, 10.0, f["min"], 1e-9)
 		assert.InDelta(t, 40.0, f["max"], 1e-9)
 		assert.InDelta(t, 25.0, f["avg"], 1e-9)
 		assert.Contains(t, f, "p90")
 		assert.Contains(t, f, "p99")
+	})
+
+	t.Run("jmeter field names", func(t *testing.T) {
+		t.Parallel()
+		f := statsFields([]float64{10, 20, 30, 40}, []float64{90, 99}, jmeterPercentileField)
+		assert.Contains(t, f, "pct90.0")
+		assert.Contains(t, f, "pct99.0")
 	})
 }
 
@@ -131,10 +146,10 @@ func TestAggregatorIngest(t *testing.T) {
 	assert.Len(t, m.allValues, 3)
 	assert.Len(t, m.okValues, 2)
 	assert.Len(t, m.koValues, 1)
-	assert.Equal(t, int64(1), m.errors[errKey{status: "500", msg: "boom"}])
-	// Per-status-code counters track every code, including successful 2xx.
-	assert.Equal(t, int64(2), m.statusCounts["200"])
-	assert.Equal(t, int64(1), m.statusCounts["500"])
+	// Per-(status,message) counters track every response, including successful 2xx,
+	// with a synthetic "OK" message for successes (mirroring JMeter's own rows).
+	assert.Equal(t, int64(2), m.statusCounts[errKey{status: "200", msg: okMessage}])
+	assert.Equal(t, int64(1), m.statusCounts[errKey{status: "500", msg: "boom"}])
 	// data_sent is tracked as a global total, not per-group, and must not create a group.
 	assert.Equal(t, 1024.0, a.totalSent)
 	require.Len(t, a.groups, 1)

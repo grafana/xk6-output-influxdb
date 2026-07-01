@@ -229,14 +229,92 @@ func TestOutputAggregated(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Contains(t, body, "k6_aggregated", "aggregated measurement expected")
-	assert.Contains(t, body, "result=ok")
-	assert.Contains(t, body, "result=ko")
-	assert.Contains(t, body, "result=all")
+	assert.Contains(t, body, "statut=ok")
+	assert.Contains(t, body, "statut=ko")
+	assert.Contains(t, body, "statut=all")
 	assert.Contains(t, body, "name=all", "cumulative rollup row emitted")
 	assert.Contains(t, body, "name=GET", "transaction name carried as tag")
 	assert.Contains(t, body, "testid=run1", "custom tag carried automatically (no extraTags config)")
 	assert.Contains(t, body, "p95")
+	assert.Contains(t, body, "countError", "cumulative row reports total errors")
 	assert.NotContains(t, body, "vu=", "high-cardinality vu tag must be dropped")
+}
+
+func TestOutputAggregatedJMeterSchema(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var body string
+	registry := metrics.NewRegistry()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		b := bytes.NewBuffer(nil)
+		_, _ = io.Copy(b, r.Body)
+		mu.Lock()
+		body += b.String()
+		mu.Unlock()
+		rw.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	c, err := New(output.Params{
+		Logger:         logrus.New(),
+		ConfigArgument: fmt.Sprintf("%s/testbucket", ts.URL),
+		JSONConfig: json.RawMessage(
+			`{"aggregation":{"enabled":true,"flushInterval":"50ms","percentiles":[90],"schema":"jmeter"}}`),
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.Start())
+
+	dur, err := registry.NewMetric("http_req_duration", metrics.Trend)
+	require.NoError(t, err)
+	vus, err := registry.NewMetric("vus", metrics.Gauge)
+	require.NoError(t, err)
+
+	mkSample := func(m *metrics.Metric, v float64, tags map[string]string) metrics.Sample {
+		return metrics.Sample{
+			TimeSeries: metrics.TimeSeries{
+				Metric: m,
+				Tags:   registry.RootTagSet().WithTagsFromMap(tags),
+			},
+			Time:  time.Now(),
+			Value: v,
+		}
+	}
+	c.AddMetricSamples([]metrics.SampleContainer{metrics.Samples{
+		mkSample(dur, 100, map[string]string{
+			"name": "GET /x", "group": "g", "application": "ELEARN", "method": "GET",
+			"proto": "HTTP/1.1", "tls_version": "tls1.3", "scenario": "default",
+			"expected_response": "true",
+		}),
+		mkSample(dur, 500, map[string]string{
+			"name": "GET /x", "group": "g", "application": "ELEARN",
+			"expected_response": "false", "status": "500", "error": "boom",
+		}),
+		mkSample(vus, 3, nil),
+	}})
+
+	require.NoError(t, c.Stop()) // Stop flushes the final window and waits for writes.
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, body, "transaction=g::GET", "group+name combined into transaction")
+	assert.NotContains(t, body, "name=GET", "no separate name tag in jmeter schema")
+	assert.NotContains(t, body, ",group=g", "no separate group tag in jmeter schema")
+	assert.Contains(t, body, "hit=", "hit field, not hits")
+	assert.NotContains(t, body, "hits=")
+	assert.Contains(t, body, "pct90.0", "jmeter-style percentile field name")
+	assert.Contains(t, body, "responseCode=500")
+	assert.Contains(t, body, "responseMessage=boom", "responseMessage is a tag, not a quoted field value")
+	assert.Contains(t, body, "application=ELEARN", "custom tag still passes through")
+	assert.NotContains(t, body, "method=", "k6-only tag dropped in jmeter schema")
+	assert.NotContains(t, body, "proto=", "k6-only tag dropped in jmeter schema")
+	assert.NotContains(t, body, "tls_version=", "k6-only tag dropped in jmeter schema")
+	assert.NotContains(t, body, "scenario=", "k6-only tag dropped in jmeter schema")
+	assert.Contains(t, body, "transaction=internal", "thread metrics stay a separate row")
+	assert.Contains(t, body, "minAT=")
+	assert.Contains(t, body, "maxAT=")
+	assert.Contains(t, body, "meanAT=")
 }
 
 func TestMakeFieldKinds(t *testing.T) {

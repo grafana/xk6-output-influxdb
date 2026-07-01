@@ -64,19 +64,30 @@ Your tags — both k6 built-in tags and your own custom tags (set via test-wide 
 | K6_INFLUXDB_AGGREGATION_ENABLED        | false | When `true`, send aggregated summaries instead of raw per-sample points. |
 | K6_INFLUXDB_AGGREGATION_FLUSH_INTERVAL | 5s    | How often aggregated summaries are written. |
 | K6_INFLUXDB_AGGREGATION_MEASUREMENT    | k6_aggregated | InfluxDB measurement name for aggregated points. |
-| K6_INFLUXDB_AGGREGATION_PERCENTILES    | 90,95,99 | Response-time percentiles to compute (rendered as fields `p90`, `p95`, ...). |
+| K6_INFLUXDB_AGGREGATION_PERCENTILES    | 90,95,99 | Response-time percentiles to compute (rendered as fields `p90`/`pct90.0`, depending on schema — see below). |
 | K6_INFLUXDB_AGGREGATION_DROP_TAGS      | vu,iter,url | Comma-separated denylist of high-cardinality tags excluded from the aggregation grouping. Every other tag (built-in or custom) is kept automatically. |
+| K6_INFLUXDB_AGGREGATION_SCHEMA         | k6 | Tag/field naming scheme for aggregated points: `k6` (this output's own naming) or `jmeter`, which mirrors a real JMeter InfluxDB backend listener's schema so existing JMeter dashboards/queries can be reused against k6 data. |
 
-**Schema of aggregated points** (measurement `k6_aggregated`):
+### `k6` schema (default)
 
-- Tags: `name` (request name), `group`, `result` (`ok`/`ko`/`all`/`status`), plus every other tag on the sample (your custom tags such as `testid`, plus built-in tags like `method`, `scenario`) except those in the denylist.
+- Tags: `name` (request name), `group`, `statut` (`ok`/`ko`/`all`), plus every other tag on the sample (your custom tags such as `testid`, plus built-in tags like `method`, `scenario`) except those in the denylist.
 - Fields (per request/group row): `count`, `avg`, `min`, `max`, `hits`, and one field per configured percentile (`p90`, `p95`, `p99`, ...).
-- A per-error row (tags `result=ko`, `status` = HTTP code, `error` = message) with `errors` count.
-- Per-HTTP-status-code rows (tags `result=status`, `status` = HTTP code such as `200`/`404`/`0`) with a `count` field. These give a full response-code distribution — **including successful 2xx** — even though the main ok/ko/all rows omit the status code. Counts are additive across flush windows, so a response-code chart is exact at any time range. (`status=0` denotes a transport-level failure: connection refused, timeout, DNS, etc.)
-- A cumulative row (`name=all`, `result=all`) with exact run-wide `count`, `avg`, `min`, `max`, percentiles (`p90`/`p95`/...), `hits`, `errors`, plus `data_sent` and `data_received`. (`data_sent`/`data_received` are run-wide totals because k6 measures them at the connection level and cannot attribute them to individual requests.)
-- An `name=internal` row with active-VU metrics `vus_min`, `vus_max`, `vus_mean`.
+- Per-response-code rows (tags `status` = HTTP code such as `200`/`404`/`0`, `error` = message when not a success) with a `count` field. These give a full response-code distribution — **including successful 2xx** — even though the main ok/ko/all rows omit the status code. Counts are additive across flush windows, so a response-code chart is exact at any time range. (`status=0` denotes a transport-level failure: connection refused, timeout, DNS, etc.)
+- A cumulative row (`name=all`, `statut=all`) with exact run-wide `count`, `avg`, `min`, `max`, percentiles, `hits`, `countError`, plus `data_sent` and `data_received`. (`data_sent`/`data_received` are run-wide totals because k6 measures them at the connection level and cannot attribute them to individual requests.)
+- A `name=internal` row with active-VU metrics `minAT`, `maxAT`, `meanAT`.
 
-The response-time signal is k6's `http_req_duration`; `ok`/`ko` is derived from the sample's `expected_response` tag. Note the synthetic ok/ko/all split is exposed as the `result` tag, kept separate from k6's built-in `status` (HTTP status code) tag.
+### `jmeter` schema (opt-in, `K6_INFLUXDB_AGGREGATION_SCHEMA=jmeter`)
+
+Structurally identical to a real JMeter InfluxDB backend listener's output (verified against a live JMeter-written bucket), so existing JMeter dashboards/queries work unmodified against k6 data — only the values differ, not the shape:
+
+- Tags: `transaction` (k6's `group` + `name` combined, e.g. `checkout::GET /cart`), `statut` (`ok`/`ko`/`all`). k6-only tags with no JMeter equivalent (`method`, `proto`, `tls_version`, `scenario`) are dropped; any other custom tag (e.g. `application`, `testTitle` set via k6's `options.tags`) still passes through.
+- Fields (per request/group row): `count`, `avg`, `min`, `max`, `hit`, and one field per configured percentile (`pct90.0`, `pct95.0`, `pct99.0`, ...).
+- Per-response-code rows (tags `responseCode`, `responseMessage` — `"OK"` on success) with a `count` field, no `statut` tag. Same additive-counts behavior as the k6 schema.
+- A cumulative row (`transaction=all`, `statut=all`) with exact run-wide `count`, `avg`, `min`, `max`, percentiles, `hit`, `countError`. No `data_sent`/`data_received` (no JMeter equivalent).
+- A `transaction=internal` row with active-VU metrics `minAT`, `maxAT`, `meanAT`.
+- Real JMeter's `rb`/`sb` (per-request byte counts) and `startedT`/`endedT` (threads started/ended per interval) are **not** emitted — k6 has no equivalent per-request data.
+
+In both schemas the response-time signal is k6's `http_req_duration`; `ok`/`ko` is derived from the sample's `expected_response` tag. The synthetic ok/ko/all split is exposed as the `statut` tag, kept separate from k6's built-in `status` (HTTP status code) tag.
 
 
 # Docker Compose

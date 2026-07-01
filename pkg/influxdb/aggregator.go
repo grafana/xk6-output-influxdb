@@ -15,31 +15,42 @@ const (
 	statusKO  = "ko"
 	statusAll = "all"
 
-	// resultStatusCount marks the per-HTTP-status-code counter rows. These sit
-	// alongside the ok/ko/all rows and carry only a `count` field (no percentiles),
-	// so a full response-code distribution — including successful 2xx — can be
-	// charted in aggregated mode. Counts are additive across flush windows.
-	resultStatusCount = "status"
+	// okMessage is the synthetic responseMessage used for successful samples,
+	// mirroring JMeter's own "OK" message on its per-response-code breakdown rows.
+	okMessage = "OK"
 )
 
-// k6 metric names and tag keys used by the aggregator. Response time is modeled
-// on http_req_duration, exactly like JMeter models it on the sampler elapsed time.
+// Aggregation schema modes, selected by Config.Aggregation.Schema.
+const (
+	schemaK6     = "k6"
+	schemaJMeter = "jmeter"
+)
+
+// k6 metric names ingested by the aggregator. Response time is modeled on
+// http_req_duration, exactly like JMeter models it on the sampler elapsed time.
 const (
 	metricHTTPReqDuration = "http_req_duration"
 	metricDataSent        = "data_sent"
 	metricDataReceived    = "data_received"
 	metricVUs             = "vus"
+)
 
+// k6 sample tag keys read by the aggregator. These describe the *input* (raw k6
+// sample tags) and never change with the output schema; what varies by schema is
+// how they get renamed/combined/dropped on the way out -- see schemaDef below.
+const (
 	tagName             = "name"
+	tagGroup            = "group"
 	tagStatus           = "status"
 	tagError            = "error"
 	tagErrorCode        = "error_code"
 	tagExpectedResponse = "expected_response"
-
-	// tagResult holds the synthetic ok/ko/all split. It is deliberately distinct
-	// from k6's built-in "status" (HTTP status code) tag to avoid a collision.
-	tagResult = "result"
 )
+
+// tagResult is the tag key both schemas use for the synthetic ok/ko/all split,
+// under JMeter's own name ("statut"). Deliberately distinct from k6's built-in
+// "status" (HTTP status code) tag to avoid a collision.
+const tagResult = "statut"
 
 // internalTags are read by the aggregator itself (for the ok/ko split and the
 // per-error breakdown) and are never used as grouping dimensions.
@@ -48,6 +59,94 @@ var internalTags = map[string]bool{
 	tagStatus:           true,
 	tagError:            true,
 	tagErrorCode:        true,
+}
+
+// schemaDef fully describes one aggregation output schema's tag/field naming.
+// aggregateBatch and baseTags never branch on which schema is active -- they
+// look values up on the active schemaDef instead. Every schema-dependent
+// decision lives here, in exactly one of the two schemaDef values below.
+type schemaDef struct {
+	// hitField is the field name for the per-window hit/request count.
+	hitField string
+	// countErrorField is the field name for the cumulative error count, set only
+	// on the "all" rollup row.
+	countErrorField string
+	// percentileField renders a percentile (e.g. 90) as its field name.
+	percentileField func(p float64) string
+	// combineTransaction merges tagName+tagGroup into a single transactionTag
+	// when true (JMeter has no separate group concept); when false, tagName and
+	// tagGroup stay separate tags and transactionTag is unused.
+	combineTransaction bool
+	transactionTag     string
+	// responseCodeTag/responseMessageTag are the tag keys used on the
+	// per-response-code breakdown rows.
+	responseCodeTag    string
+	responseMessageTag string
+	// omitSuccessMessage suppresses responseMessageTag on successful rows. Set
+	// for k6 schema so it doesn't invent a new "error" tag value that never
+	// existed on 2xx/3xx rows before this feature added response-code breakdown
+	// rows; JMeter's own schema always sets it (including "OK" on success).
+	omitSuccessMessage bool
+	// includeConnectionTotals reports data_sent/data_received on the cumulative
+	// row. k6 measures these at the connection level, with no per-transaction or
+	// JMeter equivalent.
+	includeConnectionTotals bool
+	// droppedTags are tag keys with no equivalent in this schema, excluded at
+	// both grouping time (see newAggregator) and emission time (see baseTags).
+	droppedTags map[string]bool
+	// minActiveField/maxActiveField/meanActiveField are the active-thread (VU)
+	// field names on the separate "internal" row.
+	minActiveField  string
+	maxActiveField  string
+	meanActiveField string
+}
+
+// k6Schema is this output's own naming (Aggregation.Schema == "k6", the
+// default): unchanged from before this feature added a second schema.
+var k6Schema = schemaDef{
+	hitField:                "hits",
+	countErrorField:         "countError",
+	percentileField:         percentileField,
+	combineTransaction:      false,
+	responseCodeTag:         tagStatus,
+	responseMessageTag:      tagError,
+	omitSuccessMessage:      true,
+	includeConnectionTotals: true,
+	minActiveField:          "minAT",
+	maxActiveField:          "maxAT",
+	meanActiveField:         "meanAT",
+}
+
+// jmeterSchema mirrors a real JMeter InfluxDB backend listener's own schema
+// (verified against a live JMeter-written bucket via the InfluxDB MCP during
+// design), so existing JMeter dashboards/queries can be reused against k6 data.
+var jmeterSchema = schemaDef{
+	hitField:                "hit",
+	countErrorField:         "countError",
+	percentileField:         jmeterPercentileField,
+	combineTransaction:      true,
+	transactionTag:          "transaction",
+	responseCodeTag:         "responseCode",
+	responseMessageTag:      "responseMessage",
+	includeConnectionTotals: false,
+	droppedTags: map[string]bool{
+		"method":      true,
+		"proto":       true,
+		"tls_version": true,
+		"scenario":    true,
+	},
+	minActiveField:  "minAT",
+	maxActiveField:  "maxAT",
+	meanActiveField: "meanAT",
+}
+
+// schemaFor returns the schemaDef for a Config.Aggregation.Schema value,
+// defaulting to k6Schema for "" (unset) or "k6".
+func schemaFor(name string) schemaDef {
+	if name == schemaJMeter {
+		return jmeterSchema
+	}
+	return k6Schema
 }
 
 // k6LifecycleGroups are the raw group tag values k6 assigns to requests made
@@ -62,8 +161,8 @@ var k6LifecycleGroups = map[string]bool{
 // keys (it cannot appear in normal tag values).
 const groupSeparator = "\x1f"
 
-// errKey identifies a unique error bucket, like JMeter's ErrorMetric
-// (response code + message).
+// errKey identifies a unique (response code, message) bucket, like JMeter's own
+// per-response-code breakdown rows.
 type errKey struct {
 	status string
 	msg    string
@@ -84,25 +183,23 @@ type samplerMetric struct {
 	failures  int64
 	hits      int64
 
-	errors map[errKey]int64
-
-	// statusCounts holds the per-HTTP-status-code request count (e.g. "200" -> 9,
-	// "500" -> 1). Unlike the ok/ko split, this keeps every distinct code so a
-	// full response-code distribution can be reported.
-	statusCounts map[string]int64
+	// statusCounts holds the per-(status, message) request count (e.g. ("200","OK")
+	// -> 9, ("500","boom") -> 1), covering every distinct response, not just
+	// failures, so a full response-code distribution can be reported -- mirroring
+	// JMeter's own per-response-code rows, which carry no ok/ko/all split.
+	statusCounts map[errKey]int64
 }
 
 func newSamplerMetric(tags map[string]string) *samplerMetric {
 	return &samplerMetric{
 		tags:         tags,
-		errors:       make(map[errKey]int64),
-		statusCounts: make(map[string]int64),
+		statusCounts: make(map[errKey]int64),
 	}
 }
 
 // addDuration records a single response-time observation, routing it into the
-// ok/ko/all buckets just like JMeter does, and counting its HTTP status code.
-func (m *samplerMetric) addDuration(v float64, ok bool, status string, ek errKey) {
+// ok/ko/all buckets just like JMeter does, and counting its (status, message) pair.
+func (m *samplerMetric) addDuration(v float64, ok bool, status, errMsg string) {
 	m.allValues = append(m.allValues, v)
 	m.hits++
 	// k6 reports status "0" for transport-level failures (connection refused,
@@ -110,14 +207,20 @@ func (m *samplerMetric) addDuration(v float64, ok bool, status string, ek errKey
 	if status == "" {
 		status = "0"
 	}
-	m.statusCounts[status]++
+	msg := errMsg
+	switch {
+	case ok:
+		msg = okMessage
+	case msg == "":
+		msg = "KO"
+	}
+	m.statusCounts[errKey{status: status, msg: msg}]++
 	if ok {
 		m.okValues = append(m.okValues, v)
 		m.successes++
 	} else {
 		m.koValues = append(m.koValues, v)
 		m.failures++
-		m.errors[ek]++
 	}
 }
 
@@ -150,6 +253,7 @@ type aggregator struct {
 	dropTags    map[string]bool
 	percentiles []float64
 	measurement string
+	schema      string
 
 	groups map[string]*samplerMetric
 	users  userMetric
@@ -166,10 +270,23 @@ func newAggregator(c Config) *aggregator {
 	for _, t := range c.Aggregation.DropTags {
 		drop[t] = true
 	}
+	schema := c.Aggregation.Schema.String
+	if schema == "" {
+		schema = schemaK6
+	}
+	// Drop the active schema's droppedTags at grouping time too, not just at
+	// emission time in baseTags: otherwise two groups differing only by one of
+	// these tags would still be grouped separately but emit points with an
+	// identical schema tag set and timestamp, silently overwriting each other in
+	// InfluxDB instead of being counted together.
+	for t := range schemaFor(schema).droppedTags {
+		drop[t] = true
+	}
 	return &aggregator{
 		dropTags:    drop,
 		percentiles: c.Aggregation.Percentiles,
 		measurement: c.Aggregation.Measurement.String,
+		schema:      schema,
 		groups:      make(map[string]*samplerMetric),
 	}
 }
@@ -185,7 +302,7 @@ func (a *aggregator) groupTags(tagMap map[string]string) map[string]string {
 		}
 		// k6 stores group paths as "::root::child"; strip the leading "::" so
 		// the tag value is human-readable (e.g. "DCPAN-TR-01-homepage").
-		if k == "group" {
+		if k == tagGroup {
 			v = strings.TrimPrefix(v, "::")
 		}
 		tags[k] = v
@@ -236,16 +353,12 @@ func (a *aggregator) ingest(containers []metrics.SampleContainer) {
 			switch s.Metric.Name {
 			case metricHTTPReqDuration:
 				tagMap := s.Tags.Map()
-				if k6LifecycleGroups[tagMap["group"]] {
+				if k6LifecycleGroups[tagMap[tagGroup]] {
 					continue
 				}
 				m := a.metricFor(tagMap)
 				ok := tagMap[tagExpectedResponse] != "false"
-				var ek errKey
-				if !ok {
-					ek = errKey{status: tagMap[tagStatus], msg: tagMap[tagError]}
-				}
-				m.addDuration(s.Value, ok, tagMap[tagStatus], ek)
+				m.addDuration(s.Value, ok, tagMap[tagStatus], tagMap[tagError])
 			case metricDataSent:
 				a.totalSent += s.Value
 			case metricDataReceived:
@@ -266,6 +379,7 @@ type aggSnapshot struct {
 	totalReceived float64
 	percentiles   []float64
 	measurement   string
+	schema        string
 }
 
 // drain atomically swaps out the current window for a fresh empty one and returns
@@ -282,6 +396,7 @@ func (a *aggregator) drain() aggSnapshot {
 		totalReceived: a.totalReceived,
 		percentiles:   a.percentiles,
 		measurement:   a.measurement,
+		schema:        a.schema,
 	}
 	a.groups = make(map[string]*samplerMetric)
 	a.users = userMetric{}
@@ -291,8 +406,9 @@ func (a *aggregator) drain() aggSnapshot {
 }
 
 // statsFields computes the JMeter-style summary fields (count/min/max/avg + the
-// configured percentiles) for a slice of response-time values.
-func statsFields(values []float64, percentiles []float64) map[string]any {
+// configured percentiles) for a slice of response-time values. percentileFieldFn
+// renders each percentile's field name, and differs by aggregation schema.
+func statsFields(values []float64, percentiles []float64, percentileFieldFn func(float64) string) map[string]any {
 	count := int64(len(values))
 	fields := map[string]any{"count": count}
 	if count == 0 {
@@ -317,7 +433,7 @@ func statsFields(values []float64, percentiles []float64) map[string]any {
 	copy(sorted, values)
 	sort.Float64s(sorted)
 	for _, p := range percentiles {
-		fields[percentileField(p)] = quantile(sorted, p)
+		fields[percentileFieldFn(p)] = quantile(sorted, p)
 	}
 	return fields
 }
@@ -342,12 +458,22 @@ func quantile(sorted []float64, p float64) float64 {
 	return sorted[lo] + frac*(sorted[lo+1]-sorted[lo])
 }
 
-// percentileField renders a percentile as an InfluxDB field name, e.g. 90 -> "p90",
-// 99.9 -> "p99_9".
+// percentileField renders a percentile as a k6-schema InfluxDB field name, e.g.
+// 90 -> "p90", 99.9 -> "p99_9".
 func percentileField(p float64) string {
 	s := strconv.FormatFloat(p, 'f', -1, 64)
 	s = strings.ReplaceAll(s, ".", "_")
 	return "p" + s
+}
+
+// jmeterPercentileField renders a percentile as JMeter's own field name, e.g.
+// 90 -> "pct90.0", 99.9 -> "pct99.9". JMeter always includes a decimal point.
+func jmeterPercentileField(p float64) string {
+	s := strconv.FormatFloat(p, 'f', -1, 64)
+	if !strings.Contains(s, ".") {
+		s += ".0"
+	}
+	return "pct" + s
 }
 
 // copyTags returns a shallow copy of a tag map so callers can add per-point tags

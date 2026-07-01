@@ -69,13 +69,14 @@ func TestAggregationConfigDefaults(t *testing.T) {
 	assert.Equal(t, "k6_aggregated", c.Aggregation.Measurement.String)
 	assert.Equal(t, []float64{90, 95, 99}, c.Aggregation.Percentiles)
 	assert.Equal(t, []string{"vu", "iter", "url"}, c.Aggregation.DropTags)
+	assert.Equal(t, "k6", c.Aggregation.Schema.String)
 }
 
 func TestAggregationConfigFromJSON(t *testing.T) {
 	t.Parallel()
 
 	json := []byte(`{"aggregation":{"enabled":true,"flushInterval":"10s",` +
-		`"measurement":"perf","percentiles":[50,90,99],"dropTags":["vu","iter","url","ip"]}}`)
+		`"measurement":"perf","percentiles":[50,90,99],"dropTags":["vu","iter","url","ip"],"schema":"jmeter"}}`)
 	c, err := GetConsolidatedConfig(json, nil, "")
 	assert.NoError(t, err)
 	assert.True(t, c.Aggregation.Enabled.Bool)
@@ -83,6 +84,7 @@ func TestAggregationConfigFromJSON(t *testing.T) {
 	assert.Equal(t, "perf", c.Aggregation.Measurement.String)
 	assert.Equal(t, []float64{50, 90, 99}, c.Aggregation.Percentiles)
 	assert.Equal(t, []string{"vu", "iter", "url", "ip"}, c.Aggregation.DropTags)
+	assert.Equal(t, "jmeter", c.Aggregation.Schema.String)
 }
 
 func TestAggregationConfigFromEnv(t *testing.T) {
@@ -94,6 +96,7 @@ func TestAggregationConfigFromEnv(t *testing.T) {
 		"K6_INFLUXDB_AGGREGATION_MEASUREMENT":    "perf_env",
 		"K6_INFLUXDB_AGGREGATION_PERCENTILES":    "50,90,99",
 		"K6_INFLUXDB_AGGREGATION_DROP_TAGS":      "vu,iter,url,ip",
+		"K6_INFLUXDB_AGGREGATION_SCHEMA":         "jmeter",
 	}
 	c, err := GetConsolidatedConfig(nil, env, "")
 	assert.NoError(t, err)
@@ -102,4 +105,18 @@ func TestAggregationConfigFromEnv(t *testing.T) {
 	assert.Equal(t, "perf_env", c.Aggregation.Measurement.String)
 	assert.Equal(t, []float64{50, 90, 99}, c.Aggregation.Percentiles)
 	assert.Equal(t, []string{"vu", "iter", "url", "ip"}, c.Aggregation.DropTags)
+	assert.Equal(t, "jmeter", c.Aggregation.Schema.String)
+}
+
+func TestValidateAggregationSchema(t *testing.T) {
+	t.Parallel()
+
+	assert.NoError(t, validateAggregation(NewConfig()))
+
+	c := NewConfig()
+	c.Aggregation.Schema = null.StringFrom("jmeter")
+	assert.NoError(t, validateAggregation(c))
+
+	c.Aggregation.Schema = null.StringFrom("bogus")
+	assert.Error(t, validateAggregation(c))
 }

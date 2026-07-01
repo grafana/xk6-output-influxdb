@@ -45,6 +45,12 @@ type AggregationConfig struct {
 	// aggregation grouping. Every other tag (built-in or custom) is kept automatically.
 	// Defaults to vu, iter and url.
 	DropTags []string `json:"dropTags,omitempty" envconfig:"K6_INFLUXDB_AGGREGATION_DROP_TAGS"`
+	// Schema selects the tag/field naming scheme for aggregated points: "k6" (default)
+	// keeps this output's own naming, "jmeter" mirrors a real JMeter InfluxDB backend
+	// listener's schema so existing JMeter dashboards/queries can be reused. Tags like
+	// JMeter's "application"/"testTitle" are not modeled separately here -- set them as
+	// k6 global tags (options.tags) and they'll flow through like any other custom tag.
+	Schema null.String `json:"schema" envconfig:"K6_INFLUXDB_AGGREGATION_SCHEMA"`
 }
 
 // NewConfig creates a new InfluxDB output config with some default values.
@@ -60,6 +66,7 @@ func NewConfig() Config {
 			Measurement:   null.NewString("k6_aggregated", false),
 			Percentiles:   []float64{90, 95, 99},
 			DropTags:      []string{"vu", "iter", "url"},
+			Schema:        null.NewString("k6", false),
 		},
 	}
 	return c
@@ -108,6 +115,9 @@ func (c Config) Apply(cfg Config) Config {
 	}
 	if len(cfg.Aggregation.DropTags) > 0 {
 		c.Aggregation.DropTags = cfg.Aggregation.DropTags
+	}
+	if cfg.Aggregation.Schema.Valid {
+		c.Aggregation.Schema = cfg.Aggregation.Schema
 	}
 	return c
 }
