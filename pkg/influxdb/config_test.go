@@ -58,3 +58,65 @@ func TestGetConsolidatedConfig(t *testing.T) {
 	assert.Equal(t, types.NullDurationFrom(duration999s), check.Precision)
 	assert.Equal(t, []string{"test-tag-1", "test-tag-2", "test-tag-3"}, check.TagsAsFields)
 }
+
+func TestAggregationConfigDefaults(t *testing.T) {
+	t.Parallel()
+
+	c, err := GetConsolidatedConfig(nil, nil, "")
+	assert.NoError(t, err)
+	assert.False(t, c.Aggregation.Enabled.Bool)
+	assert.Equal(t, 5*time.Second, time.Duration(c.Aggregation.FlushInterval.Duration))
+	assert.Equal(t, "k6_aggregated", c.Aggregation.Measurement.String)
+	assert.Equal(t, []float64{90, 95, 99}, c.Aggregation.Percentiles)
+	assert.Equal(t, []string{"vu", "iter", "url"}, c.Aggregation.DropTags)
+	assert.Equal(t, "k6", c.Aggregation.Schema.String)
+}
+
+func TestAggregationConfigFromJSON(t *testing.T) {
+	t.Parallel()
+
+	json := []byte(`{"aggregation":{"enabled":true,"flushInterval":"10s",` +
+		`"measurement":"perf","percentiles":[50,90,99],"dropTags":["vu","iter","url","ip"],"schema":"jmeter"}}`)
+	c, err := GetConsolidatedConfig(json, nil, "")
+	assert.NoError(t, err)
+	assert.True(t, c.Aggregation.Enabled.Bool)
+	assert.Equal(t, types.NullDurationFrom(10*time.Second), c.Aggregation.FlushInterval)
+	assert.Equal(t, "perf", c.Aggregation.Measurement.String)
+	assert.Equal(t, []float64{50, 90, 99}, c.Aggregation.Percentiles)
+	assert.Equal(t, []string{"vu", "iter", "url", "ip"}, c.Aggregation.DropTags)
+	assert.Equal(t, "jmeter", c.Aggregation.Schema.String)
+}
+
+func TestAggregationConfigFromEnv(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"K6_INFLUXDB_AGGREGATION_ENABLED":        "true",
+		"K6_INFLUXDB_AGGREGATION_FLUSH_INTERVAL": "3s",
+		"K6_INFLUXDB_AGGREGATION_MEASUREMENT":    "perf_env",
+		"K6_INFLUXDB_AGGREGATION_PERCENTILES":    "50,90,99",
+		"K6_INFLUXDB_AGGREGATION_DROP_TAGS":      "vu,iter,url,ip",
+		"K6_INFLUXDB_AGGREGATION_SCHEMA":         "jmeter",
+	}
+	c, err := GetConsolidatedConfig(nil, env, "")
+	assert.NoError(t, err)
+	assert.True(t, c.Aggregation.Enabled.Bool)
+	assert.Equal(t, types.NullDurationFrom(3*time.Second), c.Aggregation.FlushInterval)
+	assert.Equal(t, "perf_env", c.Aggregation.Measurement.String)
+	assert.Equal(t, []float64{50, 90, 99}, c.Aggregation.Percentiles)
+	assert.Equal(t, []string{"vu", "iter", "url", "ip"}, c.Aggregation.DropTags)
+	assert.Equal(t, "jmeter", c.Aggregation.Schema.String)
+}
+
+func TestValidateAggregationSchema(t *testing.T) {
+	t.Parallel()
+
+	assert.NoError(t, validateAggregation(NewConfig()))
+
+	c := NewConfig()
+	c.Aggregation.Schema = null.StringFrom("jmeter")
+	assert.NoError(t, validateAggregation(c))
+
+	c.Aggregation.Schema = null.StringFrom("bogus")
+	assert.Error(t, validateAggregation(c))
+}
