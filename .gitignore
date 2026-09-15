@@ -17,3 +17,7 @@ k6
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Generated from the k6-ci ref pinned in .github/workflows/all.yml.
+.golangci-base.yml
+.golangci.yml
