@@ -1,5 +1,9 @@
 MAKEFLAGS += --silent
-GOLANGCI_CONFIG ?= .golangci.yml
+
+LINT_WORKFLOW   ?= .github/workflows/all.yml
+K6_CI_REF       := $(shell grep -oE 'grafana/k6-ci/[^@[:space:]]+@[A-Za-z0-9._/-]+' $(LINT_WORKFLOW) | head -n1 | cut -d@ -f2)
+LINT_CONFIG_URL := https://raw.githubusercontent.com/grafana/k6-ci/$(K6_CI_REF)/.golangci.yml
+LINT_CONFIG     ?= .golangci.yml
 
 all: clean lint test build
 
@@ -18,13 +22,8 @@ help:
 build:
 	xk6 build --with $(shell go list -m)=.
 
-## linter-config: Checks if the linter config exists, if not, downloads it from the main k6 repository.
-linter-config:
-	test -s "${GOLANGCI_CONFIG}" || (echo "No linter config, downloading from main k6 repository..." && curl --silent --show-error --fail --no-location https://raw.githubusercontent.com/grafana/k6/master/.golangci.yml --output "${GOLANGCI_CONFIG}")	
-
-## check-linter-version: Checks if the linter version is the same as the one specified in the linter config.
-check-linter-version:
-	(golangci-lint version | grep "version $(shell head -n 1 .golangci.yml | tr -d '\# ')") || echo "Your installation of golangci-lint is different from the one that is specified in k6's linter config (there it's $(shell head -n 1 .golangci.yml | tr -d '\# ')). Results could be different in the CI."
+$(LINT_CONFIG): $(LINT_WORKFLOW)
+	curl -fsSL $(LINT_CONFIG_URL) -o $@
 
 ## grpc-server-run: Runs the gRPC server example.
 grpc-server-run:	
@@ -35,10 +34,11 @@ test:
 	echo "Running tests..."
 	go test -race -timeout 30s ./...
 
-## lint: Runs the linters.
-lint: linter-config check-linter-version
+## lint: Runs golangci-lint with the config pinned by the k6-ci workflow.
+lint: $(LINT_CONFIG)
 	echo "Running linters..."
-	golangci-lint run --out-format=tab ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$$(head -n1 $(LINT_CONFIG) | tr -d '# ') \
+	  run --config=$(LINT_CONFIG) ./...
 
 ## check: Runs the linters and tests.
 check: lint test
@@ -47,7 +47,7 @@ check: lint test
 clean:
 	echo "Cleaning up..."
 	rm -f ./k6
-	rm .golangci.yml
+	rm -f $(LINT_CONFIG)
 	rm -rf vendor
 
-.PHONY: test clean help lint check grpc-server-run build linter-config
+.PHONY: test clean help lint check grpc-server-run build
