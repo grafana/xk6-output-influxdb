@@ -27,3 +27,4 @@ A docker-compose setup provides InfluxDB, Grafana, and k6 for local testing, wit
 - The linter config is not checked in. It is downloaded from k6 core's master branch on first lint run. Do not commit it.
 
 - Tests mock the InfluxDB server with Go's httptest. No real InfluxDB instance is needed for unit tests.
+- Security issues should be reported via [Grafana's security issue reporting page](https://grafana.com/legal/report-a-security-issue/) and not directly in this repository.
